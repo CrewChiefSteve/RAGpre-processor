@@ -1,0 +1,79 @@
+// This is your Prisma schema file
+// Learn more: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:../dev.db"
+}
+
+model Job {
+  id             String    @id @default(cuid())
+  filename       String
+  status         String    // "pending" | "running" | "completed" | "failed"
+  documentType   String?
+
+  // Config fields (flattened)
+  chunkSize      Int       @default(800)
+  chunkOverlap   Int       @default(150)
+  maxPages       Int?
+  enableTables   Boolean   @default(true)
+  handwritingVision Boolean @default(false)
+  captionDiagrams Boolean @default(false)
+  debug          Boolean   @default(false)
+
+  // Timestamps
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  startedAt      DateTime?
+  completedAt    DateTime?
+
+  // Error tracking
+  error          String?
+
+  // Phase statuses stored as JSON
+  phasesJson     String    @default("{}")
+
+  // Outputs stored as JSON (for Phase 2, we'll keep it simple)
+  outputsJson    String    @default("{}")
+
+  // File paths
+  uploadedFilePath String?
+  outputDir      String?
+
+  // Relations
+  logs           Log[]
+}
+
+model Log {
+  id        String   @id @default(cuid())
+  jobId     String
+  phase     String   // "A" | "B" | "C" | "D" | "system"
+  level     String   // "info" | "warn" | "error"
+  message   String
+  createdAt DateTime @default(now())
+
+  // Relations
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+  @@index([phase])
+}
+
+model Settings {
+  id              Int     @id @default(1)
+
+  // Default job config
+  chunkSize       Int     @default(800)
+  chunkOverlap    Int     @default(150)
+  maxPages        Int?
+  enableTables    Boolean @default(true)
+  handwritingVision Boolean @default(false)
+  captionDiagrams Boolean @default(false)
+  debug           Boolean @default(false)
+
+  updatedAt       DateTime @updatedAt
+}
