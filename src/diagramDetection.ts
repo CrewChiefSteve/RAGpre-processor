@@ -1,6 +1,10 @@
 import type { AnalyzeResult } from "@azure/ai-form-recognizer";
 import type { DiagramAsset, DocumentOrigin, ContentQuality } from "./types";
-import { detectDiagramRegionsMultiPage } from "./visionDiagramSegmentation";
+import {
+  detectDiagramRegionsMultiPage,
+  type DetectDiagramRegionsMultiPageOptions,
+} from "./visionDiagramSegmentation";
+import path from "path";
 
 let idCounter = 0;
 const nextId = (prefix: string) => `${prefix}_${++idCounter}`;
@@ -13,6 +17,7 @@ export interface DiagramDetectionOptions {
   enableVisionSegmentation?: boolean;
   maxVisionPages?: number;
   debug?: boolean;
+  visionDebug?: boolean;
 }
 
 /**
@@ -77,6 +82,21 @@ export async function detectDiagrams(
     maxVisionPages = 20,
     debug = false,
   } = options;
+
+  // ===== DIAGNOSTIC LOGGING =====
+  console.log('[diagramDetection] === STARTING DIAGRAM DETECTION ===');
+  console.log('[diagramDetection] Config:', {
+    sourcePdf,
+    origin,
+    sourceFilePath,
+    enableVisionSegmentation,
+    maxVisionPages,
+    debug,
+    visionDebug: options.visionDebug,
+    hasOpenAIKey: !!process.env.OPENAI_API_KEY,
+    visionModel: process.env.VISION_MODEL,
+    pageCount: result.pages?.length ?? 0,
+  });
 
   const diagrams: DiagramAsset[] = [];
   const pagesWithDiagrams = new Set<number>();
@@ -211,12 +231,27 @@ export async function detectDiagrams(
       );
 
       try {
-        const visionResults = await detectDiagramRegionsMultiPage(
-          sourceFilePath,
-          pagesToScan,
+        // Compute debug output directory if debug mode is enabled
+        const visionDebugOutputDir = options.visionDebug
+          ? path.join(options.outDir, "debug", "vision")
+          : undefined;
+
+        // Build options for vision segmentation
+        const detectOptions: DetectDiagramRegionsMultiPageOptions = {
+          pdfPath: sourceFilePath,
+          pages: pagesToScan,
           outDir,
-          debug
-        );
+          debug,
+          visionDebugOptions: visionDebugOutputDir
+            ? {
+                enabled: true,
+                outputDir: visionDebugOutputDir,
+                debug,
+              }
+            : undefined,
+        };
+
+        const visionResults = await detectDiagramRegionsMultiPage(detectOptions);
 
         for (const pageResult of visionResults) {
           const { page: pageNumber, regions } = pageResult;

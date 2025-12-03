@@ -1,6 +1,8 @@
 import fs from "fs";
 import path from "path";
 import OpenAI from "openai";
+// Import config to ensure dotenv.config() runs before accessing env vars
+import "./config";
 
 const apiKey = process.env.OPENAI_API_KEY;
 
@@ -111,7 +113,14 @@ export interface DetectDiagramRegionsInImageOptions {
 export async function detectDiagramRegionsInImage(
   opts: DetectDiagramRegionsInImageOptions
 ): Promise<{ regions: VisionDiagramRegion[]; rawJson?: any }> {
-  if (!openai) return { regions: [] };
+  console.log('[visionClient] detectDiagramRegionsInImage called');
+  console.log('[visionClient] Has OpenAI client:', !!openai);
+  console.log('[visionClient] Image path:', opts.imagePath);
+
+  if (!openai) {
+    console.warn('[visionClient] No OpenAI client - returning empty regions');
+    return { regions: [] };
+  }
 
   const { imagePath, context, debug } = opts;
 
@@ -131,6 +140,8 @@ export async function detectDiagramRegionsInImage(
   }
 
   try {
+    console.log('[visionClient] Calling OpenAI API with model:', process.env.VISION_MODEL ?? "gpt-4o-mini");
+
     const response = await openai.chat.completions.create({
       model: process.env.VISION_MODEL ?? "gpt-4o-mini",
       messages: [
@@ -147,6 +158,8 @@ export async function detectDiagramRegionsInImage(
       ],
       response_format: { type: "json_object" },
     });
+
+    console.log('[visionClient] OpenAI API call successful');
 
     const content = response.choices[0]?.message?.content;
     if (!content) return { regions: [] };
@@ -187,9 +200,21 @@ export async function detectDiagramRegionsInImage(
         confidence: r.confidence,
       }));
 
+    console.log('[visionClient] Detected', regions.length, 'diagram region(s)');
+
     return { regions, rawJson: parsed };
-  } catch (err) {
-    console.warn("[visionClient] Failed to detect diagram regions:", err);
+  } catch (err: any) {
+    console.error("[visionClient] ========================================");
+    console.error("[visionClient] ERROR: Failed to detect diagram regions");
+    console.error("[visionClient] Error type:", err.constructor?.name);
+    console.error("[visionClient] Error message:", err.message);
+    console.error("[visionClient] Error code:", err.code);
+    console.error("[visionClient] Error status:", err.status);
+    if (err.response) {
+      console.error("[visionClient] API Response:", JSON.stringify(err.response, null, 2));
+    }
+    console.error("[visionClient] Full error:", err);
+    console.error("[visionClient] ========================================");
     return { regions: [] };
   }
 }

@@ -183,12 +183,111 @@ Vision segmentation respects several limits:
 3. **Rate limiting** - 500ms delay between page scans
 4. **Graceful failure** - Errors logged but don't crash pipeline
 
+## Vision Debug Mode
+
+Vision Debug Mode allows developers to inspect the vision-based diagram detection process by saving debug artifacts for each scanned page.
+
+### What It Does
+
+When enabled, Vision Debug Mode generates three types of artifacts for each page processed by vision segmentation:
+
+1. **Raw Page PNG** - The rendered PDF page as a PNG image
+2. **Overlay PNG** - The same page with green bounding boxes and labels showing detected diagram regions
+3. **Segments JSON** - Complete segmentation data including coordinates, metadata, and raw vision API response
+
+### Enabling Debug Mode
+
+**CLI Mode:**
+```bash
+npm start -- path/to/rulebook.pdf \
+  --visionSegmentation \
+  --debugVision
+```
+
+**Web Mode:**
+Set environment variable in `.env`:
+```bash
+ENABLE_VISION_DEBUG=true
+```
+
+### Output Structure
+
+Debug artifacts are saved under the job output directory:
+
+```
+out/
+  jobs/{jobId}/debug/vision/        # Web jobs
+  {jobName}/debug/vision/           # CLI jobs
+    pages/
+      page-001.png                  # Raw rendered page
+      page-001_overlay.png          # Page with diagram boxes
+      page-002.png
+      page-002_overlay.png
+      ...
+    segments/
+      page-001_segments.json        # Segmentation data
+      page-002_segments.json
+      ...
+```
+
+### Viewing Debug Artifacts
+
+**CLI Mode:**
+Debug files are saved directly to the filesystem. View them with any image viewer or JSON editor.
+
+**Web Mode:**
+1. Open a completed job in the web UI
+2. Click the **Debug** tab
+3. Each processed page appears as a card with:
+   - Visual preview of the overlay PNG
+   - "View Full" button to open overlay image in new tab
+   - "JSON" button to open segments JSON in new tab
+
+### Segments JSON Schema
+
+Each `page-XXX_segments.json` file contains:
+
+```json
+{
+  "page": 1,
+  "imagePath": "pages/page-001.png",
+  "regions": [
+    {
+      "xPx": 120,
+      "yPx": 340,
+      "widthPx": 450,
+      "heightPx": 300,
+      "x": 0.15,
+      "y": 0.42,
+      "width": 0.56,
+      "height": 0.37
+    }
+  ],
+  "rawJson": { /* Raw vision API response */ },
+  "metadata": {
+    "timestamp": "2025-11-26T10:30:00.000Z",
+    "model": "gpt-4o-mini",
+    "imageWidth": 800,
+    "imageHeight": 800
+  }
+}
+```
+
+### Important Notes
+
+- Debug artifacts are **only** created for pages processed by vision segmentation (Pass 3)
+- Pages with Azure diagrams (Pass 1 or 2) do not generate debug artifacts
+- Debug mode has minimal performance impact (adds ~50ms per page for overlay rendering)
+- Artifacts are filesystem-only and not stored in the database
+- Debug mode is **off by default** for both CLI and web
+
 ## Backward Compatibility
 
 - If `ENABLE_VISION_DIAGRAM_SEGMENTATION` is not set or false, behavior is identical to before
 - If `OPENAI_API_KEY` is not set, vision features are skipped with a warning
 - Existing diagrams without `source` field are treated as Azure figures
 - UI components work unchanged (manifest structure compatible)
+- Debug artifacts are optional and do not affect pipeline behavior when disabled
 
 ## Known Limitations
 

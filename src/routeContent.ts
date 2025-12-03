@@ -17,6 +17,7 @@ export interface RouteContentOptions {
   maxVisionPages?: number;
   outDir?: string;
   debug?: boolean;
+  visionDebug?: boolean;
 }
 
 /**
@@ -162,9 +163,14 @@ export async function routeContent(
     enableVisionSegmentation: options?.enableVisionSegmentation || false,
     maxVisionPages: options?.maxVisionPages || 20,
     debug: options?.debug || false,
+    visionDebug: options?.visionDebug || false,
   };
 
+  console.log('[routeContent] About to call detectDiagrams with options:', detectionOptions);
+
   const detectedDiagrams = await detectDiagrams(result, detectionOptions);
+
+  console.log('[routeContent] detectDiagrams returned:', detectedDiagrams.length, 'diagrams');
 
   return { narrativeBlocks, tables, diagrams: detectedDiagrams };
 }

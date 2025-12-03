@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { dbJobToPreprocessJob } from '@/lib/types/job';
-import { writeFile, mkdir } from 'fs/promises';
+import { writeFile, mkdir, rm } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
 
@@ -127,6 +127,42 @@ export async function GET(request: NextRequest) {
     console.error('Error fetching jobs:', error);
     return NextResponse.json(
       { error: error.message || 'Failed to fetch jobs' },
+      { status: 500 }
+    );
+  }
+}
+
+// DELETE /api/jobs - Delete all jobs
+export async function DELETE(request: NextRequest) {
+  try {
+    // Get all jobs to retrieve file paths
+    const jobs = await prisma.job.findMany();
+
+    // Delete all job files from disk
+    for (const job of jobs) {
+      if (job.outputDir && existsSync(job.outputDir)) {
+        await rm(job.outputDir, { recursive: true, force: true });
+      }
+
+      if (job.uploadedFilePath && existsSync(job.uploadedFilePath)) {
+        await rm(job.uploadedFilePath, { force: true });
+      }
+    }
+
+    // Delete all logs
+    await prisma.log.deleteMany();
+
+    // Delete all jobs
+    const result = await prisma.job.deleteMany();
+
+    return NextResponse.json({
+      message: 'All jobs deleted successfully',
+      deletedCount: result.count,
+    });
+  } catch (error: any) {
+    console.error('Error deleting all jobs:', error);
+    return NextResponse.json(
+      { error: error.message || 'Failed to delete all jobs' },
       { status: 500 }
     );
   }

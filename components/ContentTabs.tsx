@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { JobOutputs, ChunkOutput } from '@/lib/types/job';
 import DiagramGallery from './diagrams/DiagramGallery';
+import VisionDebugGallery from './debug/vision/VisionDebugGallery';
 
 interface ContentTabsProps {
   jobId: string;
@@ -29,6 +30,7 @@ export default function ContentTabs({
     { id: 'chunks', label: 'Chunks', count: outputs?.chunks?.length || 0 },
     { id: 'diagrams', label: 'Diagrams', count: diagrams.length },
     { id: 'manifest', label: 'Manifest', count: outputs?.manifest ? 1 : 0 },
+    { id: 'debug', label: 'Debug', count: 0 },
   ];
 
   const toggleChunk = (chunkId: string) => {
@@ -204,6 +206,9 @@ export default function ContentTabs({
             )}
           </div>
         );
+
+      case 'debug':
+        return <VisionDebugGallery jobId={jobId} />;
 
       default:
         return null;

@@ -64,6 +64,8 @@ This is a document preprocessing tool that uses Azure Document Intelligence to a
   - Azure Document Intelligence: `AZURE_DOC_ENDPOINT`, `AZURE_DOC_KEY`
   - OpenAI (Phase D, optional): `OPENAI_API_KEY`, `VISION_MODEL`
   - Vision features: `ENABLE_HANDWRITING_VISION`, `ENABLE_DIAGRAM_CAPTIONING`
+  - Hybrid diagram detection: `ENABLE_VISION_DIAGRAM_SEGMENTATION`, `VISION_DIAGRAM_PAGE_LIMIT`
+  - Vision Debug Mode: `ENABLE_VISION_DEBUG` (generates debug artifacts for vision-based diagram detection)
 - `config.ts` handles environment loading
 - `types.ts` contains shared TypeScript interfaces:
   - `DocumentOrigin` - tracks document source ("pdf_digital" | "image_normalized")

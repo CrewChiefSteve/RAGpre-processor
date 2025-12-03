@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { PreprocessJob, JobStatus } from '@/lib/types/job';
-import { getJobs, searchJobs, filterJobs } from '@/lib/client/jobs';
+import { getJobs, searchJobs, filterJobs, deleteJob, deleteAllJobs } from '@/lib/client/jobs';
 import StatusBadge from './StatusBadge';
 
 interface JobsListProps {
@@ -113,6 +113,44 @@ export default function JobsList({ initialJobs = [] }: JobsListProps) {
     router.push(`/jobs/${jobId}`);
   };
 
+  // Handle delete job
+  const handleDeleteJob = async (jobId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+
+    if (!confirm('Are you sure you want to delete this job? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      await deleteJob(jobId);
+      // Reload jobs after deletion
+      await loadJobs();
+    } catch (err: any) {
+      setError(err.message || 'Failed to delete job');
+      console.error('Error deleting job:', err);
+    }
+  };
+
+  // Handle delete all jobs
+  const handleDeleteAllJobs = async () => {
+    if (!confirm('Are you sure you want to delete ALL jobs? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const deletedCount = await deleteAllJobs();
+      alert(`Successfully deleted ${deletedCount} job(s)`);
+      // Reload jobs after deletion
+      await loadJobs();
+    } catch (err: any) {
+      setError(err.message || 'Failed to delete all jobs');
+      console.error('Error deleting all jobs:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Load jobs when filters change
   useEffect(() => {
     loadJobs();
@@ -149,6 +187,13 @@ export default function JobsList({ initialJobs = [] }: JobsListProps) {
           <option value="completed">Completed</option>
           <option value="failed">Failed</option>
         </select>
+        <button
+          onClick={handleDeleteAllJobs}
+          disabled={loading || jobs.length === 0}
+          className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+        >
+          Delete All Jobs
+        </button>
       </div>
 
       {/* Error Message */}
@@ -212,15 +257,24 @@ export default function JobsList({ initialJobs = [] }: JobsListProps) {
                     {job.documentType || '-'}
                   </td>
                   <td className="py-3 px-4">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleRowClick(job.id);
-                      }}
-                      className="text-blue-600 dark:text-blue-400 hover:underline"
-                    >
-                      View
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRowClick(job.id);
+                        }}
+                        className="text-blue-600 dark:text-blue-400 hover:underline"
+                      >
+                        View
+                      </button>
+                      <button
+                        onClick={(e) => handleDeleteJob(job.id, e)}
+                        className="text-red-600 dark:text-red-400 hover:underline"
+                        title="Delete job"
+                      >
+                        🗑️
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))

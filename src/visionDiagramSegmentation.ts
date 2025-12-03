@@ -1,10 +1,25 @@
 import fs from "fs";
+import fsp from "fs/promises";
 import path from "path";
 import sharp from "sharp";
 import {
   detectDiagramRegionsInImage,
   VisionDiagramRegion,
 } from "./visionClient";
+
+/**
+ * Helper: Pad page number to 3 digits
+ */
+function padPageNumber(pageNumber: number): string {
+  return String(pageNumber).padStart(3, "0");
+}
+
+/**
+ * Helper: Ensure directory exists
+ */
+async function ensureDir(dir: string): Promise<void> {
+  await fsp.mkdir(dir, { recursive: true });
+}
 
 /**
  * Lazily load Node-only PDF rendering dependencies.
@@ -38,10 +53,10 @@ async function loadCanvasModule() {
 async function loadPdfJsModule() {
   if (!_pdfjsModulePromise) {
     _pdfjsModulePromise = import(
-      "pdfjs-dist/legacy/build/pdf.js"
+      "pdfjs-dist/build/pdf.mjs"
     ).catch((err) => {
       throw new Error(
-        `[visionDiagramSegmentation] Failed to load "pdfjs-dist/legacy/build/pdf.js". ` +
+        `[visionDiagramSegmentation] Failed to load "pdfjs-dist/build/pdf.mjs". ` +
           `Make sure "pdfjs-dist" is installed (e.g. "pnpm add pdfjs-dist"). ` +
           `Inner error: ${(err as any)?.message || String(err)}`
       );
@@ -133,6 +148,10 @@ export interface VisionSegmentationOptions {
    */
   outDir: string;
   debug?: boolean;
+  /**
+   * Vision debug options for saving debug artifacts
+   */
+  visionDebugOptions?: VisionDebugOptions;
 }
 
 /**
@@ -187,12 +206,118 @@ export interface VisionSegmentationResult {
 }
 
 /**
+ * Options for vision debug mode
+ * Controls whether and where to save debug artifacts during vision segmentation
+ */
+export interface VisionDebugOptions {
+  /**
+   * Enable debug artifact generation
+   */
+  enabled: boolean;
+
+  /**
+   * Root output directory for debug artifacts
+   * Debug files will be written to:
+   * - {outputDir}/pages/*.png (rendered pages and overlays)
+   * - {outputDir}/segments/*.json (segmentation results)
+   */
+  outputDir: string;
+
+  /**
+   * Additional debug logging (optional, reuses existing debug flag behavior)
+   */
+  debug?: boolean;
+}
+
+/**
+ * Options for multi-page diagram detection
+ */
+export interface DetectDiagramRegionsMultiPageOptions {
+  pdfPath: string;
+  pages: number[];
+  outDir: string;
+  debug?: boolean;
+  visionDebugOptions?: VisionDebugOptions;
+}
+
+/**
+ * Debug segment file structure
+ */
+interface VisionDebugSegmentFile {
+  page: number;
+  imagePath: string;
+  regions: DiagramRegionResult[];
+  rawJson?: any;
+  metadata: {
+    timestamp: string;
+    model: string;
+    imageWidth: number;
+    imageHeight: number;
+  };
+}
+
+/**
+ * Create an overlay image with diagram boxes drawn on the page
+ */
+async function createOverlayImage(
+  sourceImagePath: string,
+  regions: DiagramRegionResult[],
+  outputPath: string,
+  imageWidth: number,
+  imageHeight: number
+): Promise<void> {
+  // Load canvas module dynamically (same pattern as PDF rendering)
+  const canvasModule = await loadCanvasModule();
+  const canvasNs: any =
+    canvasModule && (canvasModule as any).createCanvas
+      ? canvasModule
+      : (canvasModule as any).default || canvasModule;
+  const { createCanvas, loadImage } = canvasNs;
+
+  // Load the source image
+  const image = await loadImage(sourceImagePath);
+  const canvas = createCanvas(imageWidth, imageHeight);
+  const ctx = canvas.getContext("2d");
+
+  // Draw the base image
+  ctx.drawImage(image, 0, 0, imageWidth, imageHeight);
+
+  // Draw boxes and labels for each region
+  for (let i = 0; i < regions.length; i++) {
+    const region = regions[i];
+
+    // Draw green rectangle
+    ctx.strokeStyle = "#00FF00";
+    ctx.lineWidth = 4;
+    ctx.strokeRect(region.xPx, region.yPx, region.widthPx, region.heightPx);
+
+    // Draw index label
+    ctx.font = "24px sans-serif";
+    ctx.fillStyle = "#FFFFFF";
+    ctx.strokeStyle = "#000000";
+    ctx.lineWidth = 2;
+    const labelText = String(i + 1);
+    const labelX = region.xPx + 10;
+    const labelY = region.yPx + 30;
+    ctx.strokeText(labelText, labelX, labelY);
+    ctx.fillText(labelText, labelX, labelY);
+  }
+
+  // Save the overlay image
+  const buffer = canvas.toBuffer("image/png");
+  await fsp.writeFile(outputPath, buffer);
+}
+
+/**
  * Run the vision model on a single page to detect diagram regions.
  */
 export async function detectDiagramRegionsWithVision(
   options: VisionSegmentationOptions
 ): Promise<VisionSegmentationResult> {
-  const { pdfPath, pageNumber, outDir, debug } = options;
+  const { pdfPath, pageNumber, outDir, debug, visionDebugOptions } = options;
+
+  console.log('[visionDiagramSegmentation] === VISION SEGMENTATION CALLED ===');
+  console.log('[visionDiagramSegmentation] Page:', pageNumber, 'PDF:', pdfPath);
 
   // Either use provided page image or render one from the PDF.
   let pageImagePath = options.pageImagePath;
@@ -298,6 +423,61 @@ export async function detectDiagramRegionsWithVision(
     `[visionDiagramSegmentation] Page ${pageNumber}: detected ${results.length} diagram region(s)`
   );
 
+  // ===== DEBUG ARTIFACT GENERATION =====
+  if (visionDebugOptions?.enabled) {
+    try {
+      const debugRoot = visionDebugOptions.outputDir;
+      const pagesDir = path.join(debugRoot, "pages");
+      const segmentsDir = path.join(debugRoot, "segments");
+
+      // Ensure debug directories exist
+      await ensureDir(pagesDir);
+      await ensureDir(segmentsDir);
+
+      const padded = padPageNumber(pageNumber);
+      const pagePngPath = path.join(pagesDir, `page-${padded}.png`);
+      const overlayPngPath = path.join(pagesDir, `page-${padded}_overlay.png`);
+      const segmentsJsonPath = path.join(segmentsDir, `page-${padded}_segments.json`);
+
+      // 1. Save raw page PNG (copy from rendered page)
+      await fsp.copyFile(pageImagePath, pagePngPath);
+      if (visionDebugOptions.debug) {
+        console.log(`[visionDebug] Saved raw page: ${pagePngPath}`);
+      }
+
+      // 2. Create overlay PNG with diagram boxes
+      await createOverlayImage(pageImagePath, results, overlayPngPath, pageWidth, pageHeight);
+      if (visionDebugOptions.debug) {
+        console.log(`[visionDebug] Saved overlay: ${overlayPngPath}`);
+      }
+
+      // 3. Write segments JSON
+      const debugJson: VisionDebugSegmentFile = {
+        page: pageNumber,
+        imagePath: `pages/page-${padded}.png`,
+        regions: results,
+        rawJson: segmentationResult.rawJson,
+        metadata: {
+          timestamp: new Date().toISOString(),
+          model: process.env.VISION_MODEL || "gpt-4o-mini",
+          imageWidth: pageWidth,
+          imageHeight: pageHeight,
+        },
+      };
+
+      await fsp.writeFile(
+        segmentsJsonPath,
+        JSON.stringify(debugJson, null, 2),
+        "utf8"
+      );
+      if (visionDebugOptions.debug) {
+        console.log(`[visionDebug] Saved segments JSON: ${segmentsJsonPath}`);
+      }
+    } catch (error) {
+      console.error(`[visionDebug] Failed to save debug artifacts for page ${pageNumber}:`, error);
+    }
+  }
+
   return {
     page: pageNumber,
     imagePath: pageImagePath,
@@ -312,11 +492,9 @@ export async function detectDiagramRegionsWithVision(
  * to backfill diagrams on pages Azure didn't flag as figures/images.
  */
 export async function detectDiagramRegionsMultiPage(
-  pdfPath: string,
-  pages: number[],
-  outDir: string,
-  debug?: boolean
+  options: DetectDiagramRegionsMultiPageOptions
 ): Promise<VisionSegmentationResult[]> {
+  const { pdfPath, pages, outDir, debug, visionDebugOptions } = options;
   const results: VisionSegmentationResult[] = [];
 
   for (const pageNumber of pages) {
@@ -325,6 +503,7 @@ export async function detectDiagramRegionsMultiPage(
       pageNumber,
       outDir,
       debug,
+      visionDebugOptions,
     });
 
     results.push(result);

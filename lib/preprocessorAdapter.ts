@@ -48,6 +48,23 @@ export async function runPreprocessorForJob(
     // Get vision segmentation settings from environment
     const enableVisionSegmentation = process.env.ENABLE_VISION_DIAGRAM_SEGMENTATION === "true";
     const maxVisionPages = parseInt(process.env.VISION_DIAGRAM_PAGE_LIMIT || "20", 10);
+    const enableVisionDebug = process.env.ENABLE_VISION_DEBUG === "true";
+
+    // DEBUG: Log environment variable values
+    await log('system', 'info', `[ENV DEBUG] Raw env values:`);
+    await log('system', 'info', `  ENABLE_VISION_DIAGRAM_SEGMENTATION="${process.env.ENABLE_VISION_DIAGRAM_SEGMENTATION}"`);
+    await log('system', 'info', `  VISION_DIAGRAM_PAGE_LIMIT="${process.env.VISION_DIAGRAM_PAGE_LIMIT}"`);
+    await log('system', 'info', `  ENABLE_VISION_DEBUG="${process.env.ENABLE_VISION_DEBUG}"`);
+    await log('system', 'info', `  OPENAI_API_KEY exists: ${!!process.env.OPENAI_API_KEY}`);
+    await log('system', 'info', `  VISION_MODEL="${process.env.VISION_MODEL}"`);
+
+    // DEBUG: Log parsed config
+    await log('system', 'info', `[CONFIG DEBUG] Parsed pipeline config:`);
+    await log('system', 'info', `  enableVisionSegmentation=${enableVisionSegmentation}`);
+    await log('system', 'info', `  maxVisionPages=${maxVisionPages}`);
+    await log('system', 'info', `  enableVisionDebug=${enableVisionDebug}`);
+    await log('system', 'info', `  handwritingVision=${job.handwritingVision}`);
+    await log('system', 'info', `  captionDiagrams=${job.captionDiagrams}`);
 
     const result = await runPipeline({
       inputPath: job.uploadedFilePath,
@@ -58,6 +75,7 @@ export async function runPreprocessorForJob(
       enableVisionSegmentation,
       maxVisionPages,
       debug: job.debug,
+      visionDebug: enableVisionDebug,
     });
 
     const pipelineEnd = Date.now();

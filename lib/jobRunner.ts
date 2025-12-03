@@ -61,6 +61,11 @@ class JobRunner {
    * Check for pending jobs and process them
    */
   private async checkForJobs(): Promise<void> {
+    // Skip if already processing a job
+    if (this.currentJobId) {
+      return;
+    }
+
     try {
       // Find the oldest pending job
       const pendingJob = await prisma.job.findFirst({
@@ -68,9 +73,23 @@ class JobRunner {
         orderBy: { createdAt: 'asc' },
       });
 
-      if (pendingJob) {
-        await this.processJob(pendingJob.id);
+      if (!pendingJob) {
+        return;
       }
+
+      console.log(`[JobRunner] Found pending job: ${pendingJob.id}`);
+
+      // Update job status to running
+      await prisma.job.update({
+        where: { id: pendingJob.id },
+        data: {
+          status: 'running',
+          startedAt: new Date(),
+        },
+      });
+
+      // Process the job
+      await this.processJob(pendingJob.id);
     } catch (error) {
       console.error('[JobRunner] Error checking for jobs:', error);
     }
@@ -92,24 +111,9 @@ class JobRunner {
       });
 
       if (!job) {
-        console.error(`[JobRunner] Job ${jobId} not found`);
+        console.error(`[JobRunner] Job ${jobId} not found in database`);
         return;
       }
-
-      // Check if job is still pending
-      if (job.status !== 'pending') {
-        console.log(`[JobRunner] Job ${jobId} is not pending (status: ${job.status})`);
-        return;
-      }
-
-      // Update status to running
-      await prisma.job.update({
-        where: { id: jobId },
-        data: {
-          status: 'running',
-          startedAt: new Date(),
-        },
-      });
 
       await logger.info('system', 'Job started');
 
