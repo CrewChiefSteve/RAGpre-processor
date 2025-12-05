@@ -4,12 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc",
-    "start": "node --loader ts-node/esm --experimental-specifier-resolution=node src/index.ts",
-    "preprocess": "node --loader ts-node/esm --experimental-specifier-resolution=node src/index.ts",
+    "cli": "tsx src/index.ts",
     "dev": "next dev",
     "build:web": "next build",
     "start:web": "next start",
+    "build": "pnpm run build:web",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio"
@@ -22,7 +21,7 @@
     "dotenv": "^16.4.0",
     "next": "^14.2.0",
     "openai": "^4.0.0",
-    "pdfjs-dist": "^5.4.394",
+    "pdfjs-dist": "4.7.76",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "sharp": "^0.33.0",
@@ -38,6 +37,7 @@
     "prisma": "^5.9.0",
     "tailwindcss": "^3.4.1",
     "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.6.0"
   }
 }

@@ -41,6 +41,20 @@ function checkPdfRenderingAvailable(): boolean {
 }
 
 /**
+ * Lazy loader for PDF.js module (server-only)
+ * This module is only used in the server-side job pipeline,
+ * so we always load the Node/legacy build.
+ */
+let _pdfjsModuleCache: any = null;
+
+async function loadPdfJsModule() {
+  if (!_pdfjsModuleCache) {
+    _pdfjsModuleCache = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  }
+  return _pdfjsModuleCache;
+}
+
+/**
  * Render a PDF page to PNG (requires canvas + pdfjs-dist)
  */
 async function renderPdfPage(
@@ -48,32 +62,66 @@ async function renderPdfPage(
   pageNumber: number,
   outputPath: string
 ): Promise<void> {
-  // Dynamic require to avoid webpack bundling errors
-  // Using eval to prevent webpack from resolving at build time
-  const pdfjsLib = eval("require('pdfjs-dist')");
-  const { createCanvas } = eval("require('canvas')");
+  // Load PDF.js and canvas using dynamic imports
+  const pdfjsLibModule = await loadPdfJsModule();
+  const pdfjsLib = pdfjsLibModule?.default || pdfjsLibModule;
 
-  // Load PDF
-  const loadingTask = pdfjsLib.getDocument(pdfPath);
-  const pdf = await loadingTask.promise;
+  const canvasModule = await import("canvas");
+  const { createCanvas } = canvasModule?.default || canvasModule;
 
-  // Get page
-  const page = await pdf.getPage(pageNumber);
-  const viewport = page.getViewport({ scale: 2.0 }); // 2x scale for quality
+  // Check if we're in Node.js environment
+  const isNode = typeof window === "undefined";
 
-  // Create canvas
-  const canvas = createCanvas(viewport.width, viewport.height);
-  const context = canvas.getContext("2d");
+  console.log("[pdfjs-config]", {
+    file: "extractDiagramImages.ts",
+    isNode,
+    disableWorker: isNode,
+    pdfjsVersion: pdfjsLib?.version || "unknown",
+  });
 
-  // Render page
-  await page.render({
-    canvasContext: context as any,
-    viewport: viewport,
-  }).promise;
+  try {
+    // Load PDF with worker disabled for Node.js server environment
+    // 🔴 KEY FIX: NEVER use workers in Node
+    const loadingTask = pdfjsLib.getDocument({
+      url: pdfPath,
+      useWorkerFetch: false,
+      isEvalSupported: false,
+      useSystemFonts: true,
+      disableFontFace: true,
+      disableWorker: isNode, // Force disable worker in Node.js
+    });
 
-  // Save as PNG
-  const buffer = canvas.toBuffer("image/png");
-  await fs.promises.writeFile(outputPath, buffer);
+    const pdf = await loadingTask.promise;
+
+    // Get page
+    const page = await pdf.getPage(pageNumber);
+    const viewport = page.getViewport({ scale: 2.0 }); // 2x scale for quality
+
+    // Create canvas
+    const canvas = createCanvas(viewport.width, viewport.height);
+    const context = canvas.getContext("2d");
+
+    // Render page
+    await page.render({
+      canvasContext: context as any,
+      viewport: viewport,
+    }).promise;
+
+    // Save as PNG
+    const buffer = canvas.toBuffer("image/png");
+    await fs.promises.writeFile(outputPath, buffer);
+  } catch (err: any) {
+    const msg = String(err?.message || err);
+    if (msg.includes("Setting up fake worker failed")) {
+      console.error(
+        `[extractDiagramImages] PDF.js worker init failed (this should not happen with disableWorker: true). ` +
+        `Page ${pageNumber} will be skipped. Error: ${msg}`
+      );
+      throw new Error(`PDF rendering failed: ${msg}`);
+    }
+    // Re-throw other errors
+    throw err;
+  }
 }
 
 /**

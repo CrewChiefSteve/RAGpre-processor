@@ -1,10 +1,10 @@
 import type { AnalyzeResult } from "@azure/ai-form-recognizer";
 import type { DiagramAsset, DocumentOrigin, ContentQuality } from "./types";
-import {
-  detectDiagramRegionsMultiPage,
-  type DetectDiagramRegionsMultiPageOptions,
-} from "./visionDiagramSegmentation";
+import type {
+  DetectDiagramRegionsMultiPageOptions,
+} from "./visionDiagramSegmentation.types";
 import path from "path";
+import { trace } from "./debugTrace";
 
 let idCounter = 0;
 const nextId = (prefix: string) => `${prefix}_${++idCounter}`;
@@ -98,6 +98,14 @@ export async function detectDiagrams(
     pageCount: result.pages?.length ?? 0,
   });
 
+  trace("detectDiagrams called", {
+    pageCount: result.pages?.length ?? 0,
+    enableVision: enableVisionSegmentation,
+    hasOpenAIKey: !!process.env.OPENAI_API_KEY,
+    maxVisionPages,
+    enableVisionSegmentationRaw: process.env.ENABLE_VISION_DIAGRAM_SEGMENTATION
+  });
+
   const diagrams: DiagramAsset[] = [];
   const pagesWithDiagrams = new Set<number>();
 
@@ -107,6 +115,7 @@ export async function detectDiagrams(
   let visionSegmentCount = 0;
 
   // ===== PASS 1: Azure Figures =====
+  trace("starting pass 1 (Azure Figures)");
   const figures = (result as any).figures;
 
   if (figures && Array.isArray(figures) && figures.length > 0) {
@@ -164,7 +173,10 @@ export async function detectDiagrams(
     }
   }
 
+  trace("pass 1 complete (Azure Figures)", { foundCount: azureFigureCount });
+
   // ===== PASS 2: Azure Page-Level Images =====
+  trace("starting pass 2 (Azure Page-Level Images)");
   // Check if Azure exposes page-level images (e.g., result.pages[n].images)
   // This may vary by SDK version and document type
   if (result.pages) {
@@ -209,7 +221,22 @@ export async function detectDiagrams(
     }
   }
 
+  trace("pass 2 complete (Azure Page-Level Images)", { foundCount: azureImageCount });
+
   // ===== PASS 3: Vision-Based Segmentation =====
+  trace("starting pass 3 (Vision-Based Segmentation)");
+
+  const azureFoundNothing = azureFigureCount === 0 && azureImageCount === 0;
+  const visionEnabled = enableVisionSegmentation && !!process.env.OPENAI_API_KEY;
+
+  trace("vision fallback check", {
+    azureFoundNothing,
+    visionEnabled,
+    enableVisionSegmentation,
+    hasOpenAIKey: !!process.env.OPENAI_API_KEY,
+    willRunVision: visionEnabled
+  });
+
   if (enableVisionSegmentation && process.env.OPENAI_API_KEY) {
     const pageCount = result.pages?.length ?? 0;
 
@@ -223,6 +250,13 @@ export async function detectDiagrams(
 
     // Limit to maxVisionPages to control cost
     const pagesToScan = pagesWithoutDiagrams.slice(0, maxVisionPages);
+
+    trace("vision segmentation page selection", {
+      pagesWithoutDiagrams: pagesWithoutDiagrams.length,
+      pagesToScan: pagesToScan.length,
+      maxVisionPages,
+      pages: pagesToScan
+    });
 
     if (pagesToScan.length > 0) {
       console.log(
@@ -251,7 +285,15 @@ export async function detectDiagrams(
             : undefined,
         };
 
+        // Lazy-load vision segmentation module only when needed
+        // This avoids loading pdfjs-dist and canvas during Next.js page compilation
+        const { detectDiagramRegionsMultiPage } = await import("./visionDiagramSegmentation");
         const visionResults = await detectDiagramRegionsMultiPage(detectOptions);
+
+        trace("vision segmentation results", {
+          pagesProcessed: visionResults.length,
+          totalRegionsFound: visionResults.reduce((sum, r) => sum + r.regions.length, 0)
+        });
 
         for (const pageResult of visionResults) {
           const { page: pageNumber, regions } = pageResult;
@@ -302,14 +344,24 @@ export async function detectDiagrams(
           }
         }
       } catch (err) {
-        console.error("[diagramDetection] Vision segmentation failed:", err);
+        console.warn(
+          "[diagramDetection] Vision segmentation encountered an unexpected error. " +
+          "Continuing without vision-based diagrams for this job.",
+          err
+        );
+        trace("vision segmentation unexpected error", { error: String(err) });
+        // Job continues - vision segmentation is best-effort
       }
     } else if (debug) {
       console.log("[diagramDetection] No pages without Azure diagrams; skipping Vision segmentation");
+      trace("vision segmentation skipped", { reason: "no_pages_without_diagrams" });
     }
   } else if (debug && enableVisionSegmentation) {
     console.log("[diagramDetection] Vision segmentation requested but OPENAI_API_KEY not set");
+    trace("vision segmentation skipped", { reason: "no_openai_key" });
   }
+
+  trace("pass 3 complete (Vision-Based Segmentation)", { foundCount: visionSegmentCount });
 
   // ===== SUMMARY =====
   console.log(

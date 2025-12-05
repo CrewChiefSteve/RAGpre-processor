@@ -2,25 +2,84 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Project Structure
+
+This project operates in **two modes**:
+
+1. **CLI Mode** - Command-line tool for batch processing documents (`src/` directory)
+2. **Web Mode** - Next.js web UI for interactive document processing (`app/` directory)
+
+Both modes share the same core processing pipeline but provide different interfaces.
+
+## Tooling
+
+**Package Manager:** pnpm (required)
+**Module System:** ESM-first with TypeScript
+**Runtime:** tsx for CLI, Next.js for web
+**TypeScript Config:** `tsconfig.json` (unified config for type checking)
+
 ## Development Commands
 
+### Initial Setup
 ```bash
-# Install dependencies
-npm install
+# Install dependencies (required - uses pnpm)
+pnpm install
 
-# Build the TypeScript project
-npm run build
+# Generate Prisma client (required for web mode)
+pnpm run prisma:generate
+```
 
-# Run the CLI (after building)
-npm start
+### CLI Mode
+```bash
+# Run CLI directly with tsx (no build required)
+pnpm run cli <input-file> [options]
 
-# Run in development mode (with ts-node)
-npm run dev
+# Example CLI usage
+pnpm run cli ./test.pdf --outDir ./output --handwritingVision --captionDiagrams
+
+# Show CLI help
+pnpm run cli -- --help
+
+# Available CLI options:
+# --outDir <dir>              Output directory (default: "out")
+# --tempDir <dir>             Temp directory for normalized images (default: "temp")
+# --handwritingVision         Use vision model to transcribe handwriting
+# --captionDiagrams           Use vision model to caption diagrams
+# --visionSegmentation        Use vision for diagram detection on pages without Azure diagrams
+# --maxVisionPages <number>   Max pages for vision segmentation (default: 20)
+# --debugVision               Enable vision debug mode (saves debug artifacts)
+```
+
+### Web Mode
+```bash
+# Run Next.js dev server (http://localhost:3000)
+pnpm run dev
+
+# Build Next.js for production
+pnpm run build:web
+
+# Run production Next.js server
+pnpm run start:web
+```
+
+### Database Management (Web Mode)
+```bash
+# Run database migrations
+pnpm run prisma:migrate
+
+# Open Prisma Studio (database GUI)
+pnpm run prisma:studio
+```
+
+### Build for Production
+```bash
+# Build Next.js web app (CLI runs directly via tsx, no build needed)
+pnpm run build
 ```
 
 ## Architecture
 
-This is a document preprocessing tool that uses Azure Document Intelligence to analyze PDFs and images, then exports structured content in different formats.
+This is a document preprocessing tool that uses Azure Document Intelligence to analyze PDFs and images, then exports structured content in different formats. The core pipeline is shared between CLI and Web modes.
 
 **Processing Pipeline:**
 1. **Phase A: Input Normalization** (`src/normalizeInput.ts`) - Universal loader that accepts both PDFs and images:
