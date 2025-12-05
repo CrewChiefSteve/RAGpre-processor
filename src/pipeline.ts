@@ -19,6 +19,7 @@ export interface PipelineConfig {
   enableVisionSegmentation?: boolean;
   maxVisionPages?: number;
   debug?: boolean;
+  visionDebug?: boolean;
 }
 
 export interface PipelineResult {
@@ -51,7 +52,8 @@ export async function runPipeline(config: PipelineConfig): Promise<PipelineResul
     captionDiagrams = false,
     enableVisionSegmentation = false,
     maxVisionPages = 20,
-    debug = false
+    debug = false,
+    visionDebug = false
   } = config;
 
   // Ensure directories exist
@@ -67,11 +69,27 @@ export async function runPipeline(config: PipelineConfig): Promise<PipelineResul
   const origin = normalized.origin;
 
   // Phase B: Route content by quality
+  console.log('[pipeline] About to call routeContent with options:', {
+    enableVisionSegmentation,
+    maxVisionPages,
+    outDir,
+    debug,
+    visionDebug,
+    azurePageCount: result.pages?.length || 0
+  });
+
   const routed = await routeContent(result, sourceName, origin, normalized.normalizedPath, {
     enableVisionSegmentation,
     maxVisionPages,
     outDir,
-    debug
+    debug,
+    visionDebug
+  });
+
+  console.log('[pipeline] routeContent returned:', {
+    narrativeBlocksCount: routed.narrativeBlocks.length,
+    tablesCount: routed.tables.length,
+    diagramsCount: routed.diagrams.length
   });
 
   // Phase B+: Extract diagram images if diagrams were detected

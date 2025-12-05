@@ -1,14 +1,25 @@
 import fs from "fs";
 import path from "path";
 import OpenAI from "openai";
+// Import config to ensure dotenv.config() runs before accessing env vars
+import "./config";
+import { trace } from "./debugTrace";
 
 const apiKey = process.env.OPENAI_API_KEY;
+
+trace("visionClient module loaded", {
+  hasApiKey: !!apiKey,
+  model: process.env.VISION_MODEL,
+  enableVisionDiagramSegmentation: process.env.ENABLE_VISION_DIAGRAM_SEGMENTATION
+});
 
 if (!apiKey) {
   console.warn("[visionClient] OPENAI_API_KEY not set. Vision features will be disabled.");
 }
 
 const openai = apiKey ? new OpenAI({ apiKey }) : null;
+
+trace("OpenAI client", { initialized: !!openai });
 
 async function readImageAsBase64(imagePath: string): Promise<string> {
   const abs = path.resolve(imagePath);
@@ -111,11 +122,26 @@ export interface DetectDiagramRegionsInImageOptions {
 export async function detectDiagramRegionsInImage(
   opts: DetectDiagramRegionsInImageOptions
 ): Promise<{ regions: VisionDiagramRegion[]; rawJson?: any }> {
-  if (!openai) return { regions: [] };
+  console.log('[visionClient] detectDiagramRegionsInImage called');
+  console.log('[visionClient] Has OpenAI client:', !!openai);
+  console.log('[visionClient] Image path:', opts.imagePath);
+
+  trace("detectDiagramRegionsInImage called", {
+    imagePath: opts.imagePath,
+    hasOpenAI: !!openai,
+    debug: opts.debug
+  });
+
+  if (!openai) {
+    console.warn('[visionClient] No OpenAI client - returning empty regions');
+    trace("detectDiagramRegionsInImage: no OpenAI client");
+    return { regions: [] };
+  }
 
   const { imagePath, context, debug } = opts;
 
   const base64 = await readImageAsBase64(imagePath);
+  trace("image loaded as base64", { base64Length: base64.length });
 
   const promptParts = [
     "You are analyzing a technical racing rulebook page.",
@@ -131,6 +157,9 @@ export async function detectDiagramRegionsInImage(
   }
 
   try {
+    console.log('[visionClient] Calling OpenAI API with model:', process.env.VISION_MODEL ?? "gpt-4o-mini");
+    trace("calling vision API", { model: process.env.VISION_MODEL ?? "gpt-4o-mini" });
+
     const response = await openai.chat.completions.create({
       model: process.env.VISION_MODEL ?? "gpt-4o-mini",
       messages: [
@@ -147,6 +176,9 @@ export async function detectDiagramRegionsInImage(
       ],
       response_format: { type: "json_object" },
     });
+
+    console.log('[visionClient] OpenAI API call successful');
+    trace("vision API call successful");
 
     const content = response.choices[0]?.message?.content;
     if (!content) return { regions: [] };
@@ -187,9 +219,30 @@ export async function detectDiagramRegionsInImage(
         confidence: r.confidence,
       }));
 
+    console.log('[visionClient] Detected', regions.length, 'diagram region(s)');
+    trace("vision API response", { resultCount: regions.length, rawRegionsCount: rawRegions.length });
+
     return { regions, rawJson: parsed };
-  } catch (err) {
-    console.warn("[visionClient] Failed to detect diagram regions:", err);
+  } catch (err: any) {
+    console.error("[visionClient] ========================================");
+    console.error("[visionClient] ERROR: Failed to detect diagram regions");
+    console.error("[visionClient] Error type:", err.constructor?.name);
+    console.error("[visionClient] Error message:", err.message);
+    console.error("[visionClient] Error code:", err.code);
+    console.error("[visionClient] Error status:", err.status);
+    if (err.response) {
+      console.error("[visionClient] API Response:", JSON.stringify(err.response, null, 2));
+    }
+    console.error("[visionClient] Full error:", err);
+    console.error("[visionClient] ========================================");
+
+    trace("vision API error", {
+      errorType: err.constructor?.name,
+      errorMessage: err.message,
+      errorCode: err.code,
+      errorStatus: err.status
+    });
+
     return { regions: [] };
   }
 }

@@ -43,6 +43,11 @@ const argv = yargs(hideBin(process.argv))
           type: "number",
           default: 20,
           describe: "Maximum number of pages to scan with vision segmentation"
+        })
+        .option("debugVision", {
+          type: "boolean",
+          default: false,
+          describe: "Enable vision debug mode (save rendered page PNGs, diagram overlays, and segmentation JSON under debug/vision/)"
         }),
     async (args) => {
       const inputPath = path.resolve(args.input as string);
@@ -61,6 +66,7 @@ const argv = yargs(hideBin(process.argv))
         enableVisionSegmentation: args.visionSegmentation as boolean,
         maxVisionPages: args.maxVisionPages as number,
         debug: false,
+        visionDebug: args.debugVision as boolean,
       });
 
       console.log(
