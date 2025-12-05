@@ -7,3 +7,5 @@ dist/
 out/
 temp/
 *.db
+nul
+.claude/settings.local.json
