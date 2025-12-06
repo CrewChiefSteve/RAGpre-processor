@@ -6,14 +6,17 @@ import { getJob, getJobOutputs, LogEntry, getJobLogs } from '@/lib/client/jobs';
 import PhaseTimeline from './PhaseTimeline';
 import LogsPanel from './LogsPanel';
 import ContentTabs from './ContentTabs';
+import Link from 'next/link';
+import type { RulebookMetrics } from '@/src/lib/metrics/rulebookMetrics';
 
 interface JobDetailProps {
   jobId: string;
   initialJob: PreprocessJob;
   initialOutputs?: JobOutputs | null;
+  rulebookMetrics?: RulebookMetrics[];
 }
 
-export default function JobDetail({ jobId, initialJob, initialOutputs }: JobDetailProps) {
+export default function JobDetail({ jobId, initialJob, initialOutputs, rulebookMetrics = [] }: JobDetailProps) {
   const [job, setJob] = useState<PreprocessJob>(initialJob);
   const [outputs, setOutputs] = useState<JobOutputs | null>(initialOutputs || null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -267,6 +270,83 @@ export default function JobDetail({ jobId, initialJob, initialOutputs }: JobDeta
           </button>
         </div>
       </div>
+
+      {/* Rulebook Metrics */}
+      {rulebookMetrics.length > 0 && (
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+          <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-4">
+            Rulebooks Produced by This Job
+          </h2>
+          <div className="space-y-4">
+            {rulebookMetrics.map((rb) => (
+              <Link
+                key={rb.rulebookId}
+                href={`/rulebooks/${rb.rulebookId}`}
+                className="block p-4 bg-gray-50 dark:bg-gray-900 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition"
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                      {rb.title}
+                    </h3>
+                    <div className="flex gap-4 mt-1 text-sm text-gray-600 dark:text-gray-400">
+                      {rb.series && <span>Series: {rb.series}</span>}
+                      {rb.year && <span>Year: {rb.year}</span>}
+                      {rb.version && <span>Version: {rb.version}</span>}
+                      {rb.pageCount && <span>Pages: {rb.pageCount}</span>}
+                    </div>
+                  </div>
+                  <div className="text-blue-600 dark:text-blue-400 hover:underline ml-4">
+                    View →
+                  </div>
+                </div>
+                <div className="grid grid-cols-5 gap-3 mt-3 text-center text-sm">
+                  <div className="bg-white dark:bg-gray-800 rounded p-2">
+                    <div className="font-bold text-lg text-gray-900 dark:text-gray-100">
+                      {rb.sectionsCount}
+                    </div>
+                    <div className="text-gray-500 dark:text-gray-400 text-xs">
+                      Sections
+                    </div>
+                  </div>
+                  <div className="bg-white dark:bg-gray-800 rounded p-2">
+                    <div className="font-bold text-lg text-gray-900 dark:text-gray-100">
+                      {rb.rulesCount}
+                    </div>
+                    <div className="text-gray-500 dark:text-gray-400 text-xs">
+                      Rules
+                    </div>
+                  </div>
+                  <div className="bg-white dark:bg-gray-800 rounded p-2">
+                    <div className="font-bold text-lg text-gray-900 dark:text-gray-100">
+                      {rb.tablesCount}
+                    </div>
+                    <div className="text-gray-500 dark:text-gray-400 text-xs">
+                      Tables
+                    </div>
+                  </div>
+                  <div className="bg-white dark:bg-gray-800 rounded p-2">
+                    <div className="font-bold text-lg text-gray-900 dark:text-gray-100">
+                      {rb.diagramsCount}
+                    </div>
+                    <div className="text-gray-500 dark:text-gray-400 text-xs">
+                      Diagrams
+                    </div>
+                  </div>
+                  <div className="bg-white dark:bg-gray-800 rounded p-2">
+                    <div className="font-bold text-lg text-gray-900 dark:text-gray-100">
+                      {rb.chunksCount}
+                    </div>
+                    <div className="text-gray-500 dark:text-gray-400 text-xs">
+                      Chunks
+                    </div>
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Phase Timeline and Logs in Two Columns */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

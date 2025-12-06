@@ -2,12 +2,13 @@ import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
 import sharp from "sharp";
-import { createRequire } from "module";
+
 import {
   detectDiagramRegionsInImage,
   VisionDiagramRegion,
 } from "./visionClient";
 import { trace } from "./debugTrace";
+import { renderSinglePageToPng } from "./pipeline/render/pdfRenderer";
 
 // Re-export types from the types file (avoids loading heavy dependencies during Next.js compilation)
 export type {
@@ -38,18 +39,16 @@ async function ensureDir(dir: string): Promise<void> {
 }
 
 /**
- * Lazily load Node-only PDF rendering dependencies.
+ * Lazily load Node-only drawing dependencies (canvas).
  *
  * We use dynamic import so this file continues to work in both:
- * - CLI (ts-node/esm) where `require` is not available
- * - Next.js / Node environments where these modules exist only on the server
+ * - CLI (ts-node/esm)
+ * - Next.js / Node server environments
  *
- * If either dependency is missing, we throw a descriptive error explaining
- * how to install them.
+ * If the dependency is missing, we throw a descriptive error explaining
+ * how to install it.
  */
-
 let _canvasModulePromise: Promise<any> | null = null;
-let _pdfjsModulePromise: Promise<any> | null = null;
 
 async function loadCanvasModule() {
   if (!_canvasModulePromise) {
@@ -66,25 +65,12 @@ async function loadCanvasModule() {
   return _canvasModulePromise;
 }
 
-async function loadPdfJsModule() {
-  if (!_pdfjsModulePromise) {
-    // This module is only used in the server-side vision pipeline,
-    // so we always load the Node/legacy build.
-    _pdfjsModulePromise = import(
-      "pdfjs-dist/legacy/build/pdf.mjs"
-    ).catch((err) => {
-      throw new Error(
-        `[visionDiagramSegmentation] Failed to load "pdfjs-dist/legacy". ` +
-          `Make sure "pdfjs-dist" is installed (e.g. "pnpm add pdfjs-dist"). ` +
-          `Inner error: ${(err as any)?.message || String(err)}`
-      );
-    });
-  }
-  return _pdfjsModulePromise;
-}
-
 /**
- * Render a single PDF page to a PNG file for vision segmentation.
+ * Thin wrapper around the Phase D renderer.
+ *
+ * This is the ONLY place in the vision pipeline that touches PDF rendering.
+ * It delegates completely to src/pipeline/render/pdfRenderer.ts so there is
+ * no pdf.worker.mjs or pdf.js config in this file anymore.
  *
  * @param pdfPath Absolute path to the input PDF.
  * @param pageNumber 1-based page number to render.
@@ -95,7 +81,6 @@ async function renderPdfPageToPng(
   pageNumber: number,
   pngPath: string
 ): Promise<string | null> {
-  // Ensure directory exists
   const dir = path.dirname(pngPath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -103,200 +88,53 @@ async function renderPdfPageToPng(
 
   // Avoid work if the PNG already exists
   if (fs.existsSync(pngPath)) {
+    trace("renderPdfPageToPng: page PNG already exists", {
+      pageNumber,
+      pngPath,
+    });
     return pngPath;
   }
 
-  console.log(
-    `[visionDiagramSegmentation] Rendering page ${pageNumber} of ${pdfPath} to PNG at ${pngPath}`
-  );
-
-  trace("renderPdfPageToPng called", { pdfPath, pageNumber, pngPath });
-
-  // Load canvas module
-  const canvasModule = await loadCanvasModule();
-  const canvasNs: any =
-    canvasModule && (canvasModule as any).createCanvas
-      ? canvasModule
-      : (canvasModule as any).default || canvasModule;
-
-  if (!canvasNs || !canvasNs.createCanvas) {
-    throw new Error("Canvas module loaded but createCanvas is not available");
-  }
-
-  const { createCanvas } = canvasNs;
-  trace("Canvas module loaded", { hasCreateCanvas: !!createCanvas });
-
-  // CRITICAL: Make canvas available to PDF.js's internal NodeCanvasFactory
-  // PDF.js v4's built-in NodeCanvasFactory tries to require('canvas')
-  // We need to ensure it can find the canvas module
-  const require = createRequire(import.meta.url);
-
-  // Set up global require if not already available
-  if (typeof (globalThis as any).require === "undefined") {
-    (globalThis as any).require = require;
-    trace("Global require function created for PDF.js");
-  }
-
-  // Pre-cache the canvas module so PDF.js's NodeCanvasFactory can access it
-  try {
-    const canvasPath = require.resolve("canvas");
-    if (canvasPath && require.cache) {
-      require.cache[canvasPath] = {
-        id: canvasPath,
-        filename: canvasPath,
-        loaded: true,
-        exports: canvasNs,
-        children: [],
-        paths: []
-      } as any;
-      trace("Canvas module cached for PDF.js internal use", { canvasPath });
-    }
-  } catch (err) {
-    trace("Could not cache canvas module", { error: String(err) });
-  }
-
-  // Load PDF.js
-  const pdfjsLibAny = await loadPdfJsModule();
-  const pdfjsLib: any =
-    pdfjsLibAny && typeof (pdfjsLibAny as any).getDocument === "function"
-      ? pdfjsLibAny
-      : (pdfjsLibAny as any).default || pdfjsLibAny;
-
-  trace("PDF.js loaded successfully", {
-    version: pdfjsLib.version || "unknown",
-    hasGetDocument: typeof pdfjsLib.getDocument === "function",
+  trace("renderPdfPageToPng (vision) delegating to pdfRenderer", {
+    pdfPath,
+    pageNumber,
+    pngPath,
   });
 
-  // Check if we're in Node.js environment
-  const isNode = typeof window === "undefined";
-
-  console.log("[pdfjs-config]", {
-    file: "visionDiagramSegmentation.ts",
-    isNode,
-    disableWorker: isNode,
-    pdfjsVersion: pdfjsLib.version || "unknown",
-  });
-
-  // Read PDF data
-  const pdfData = fs.readFileSync(pdfPath);
-  trace("PDF data loaded", { pdfSize: pdfData.length });
-
-  /**
-   * NodeCanvasFactory for PDF.js v4+ in Node.js environments.
-   *
-   * PDF.js needs this factory to create canvases for:
-   * - the main page surface
-   * - patterns
-   * - image masks
-   * - transparency groups
-   */
-  class NodeCanvasFactory {
-    create(width: number, height: number) {
-      const canvas = createCanvas(Math.floor(width), Math.floor(height));
-      const context = canvas.getContext("2d");
-      return { canvas, context };
-    }
-
-    reset(canvasAndContext: any, width: number, height: number) {
-      canvasAndContext.canvas.width = Math.floor(width);
-      canvasAndContext.canvas.height = Math.floor(height);
-    }
-
-    destroy(canvasAndContext: any) {
-      canvasAndContext.canvas.width = 0;
-      canvasAndContext.canvas.height = 0;
-      canvasAndContext.canvas = null;
-      canvasAndContext.context = null;
-    }
-
-    // PDF.js's internal code sometimes calls _createCanvas
-    _createCanvas(width: number, height: number) {
-      return createCanvas(Math.floor(width), Math.floor(height));
-    }
-  }
-
-  // Create a single factory instance to use throughout
-  const canvasFactory = new NodeCanvasFactory();
-  trace("NodeCanvasFactory created");
-
-  // CRITICAL: Override PDF.js's built-in NodeCanvasFactory
-  // This ensures PDF.js internals use our canvas-aware factory
-  if (pdfjsLib.NodeCanvasFactory) {
-    pdfjsLib.NodeCanvasFactory = NodeCanvasFactory;
-    trace("Overrode PDF.js built-in NodeCanvasFactory class");
-  }
-
-  // Load PDF with canvas factory - wrapped in try-catch for defensive error handling
   try {
-    // CRITICAL: Use CanvasFactory (capital C) parameter name for PDF.js v4+
-    // Pass the CLASS itself, not an instance
-    // 🔴 KEY FIX: NEVER use workers in Node
-    const loadingTask = pdfjsLib.getDocument({
-      data: new Uint8Array(pdfData),
-      useWorkerFetch: false,
-      isEvalSupported: false,
-      useSystemFonts: true,
-      disableFontFace: true,
-      disableWorker: isNode, // Force disable worker in Node.js
-      CanvasFactory: NodeCanvasFactory, // Capital C! Pass the CLASS, not an instance
+    const result = await renderSinglePageToPng({
+      pdfPath,
+      pageNumber,
+      pngPath,
+      // logger is optional; pdfRenderer will use its own trace/console logger
     });
 
-    trace("PDF loading task created with CanvasFactory class");
-    const pdfDoc = await loadingTask.promise;
-    trace("PDF document loaded", { numPages: pdfDoc.numPages });
-
-    const page = await pdfDoc.getPage(pageNumber);
-    trace("PDF page loaded", { pageNumber });
-
-    // Get viewport at 2x scale for better quality
-    const viewport = page.getViewport({ scale: 2.0 });
-    const width = Math.floor(viewport.width);
-    const height = Math.floor(viewport.height);
-
-    trace("PDF render starting", { pageNumber, width, height });
-
-    // Use the factory instance to create the main canvas
-    const { canvas, context } = canvasFactory.create(width, height);
-    trace("Main canvas created via factory", { width, height });
-
-    // Render the page to canvas
-    // PDF.js will use the CanvasFactory class we passed to getDocument
-    await page.render({
-      canvasContext: context as any,
-      viewport,
-    }).promise;
-
-    trace("PDF render complete", { pageNumber });
-
-    // Convert to PNG buffer
-    const buffer = canvas.toBuffer("image/png");
-    trace("PNG buffer created", { size: buffer.length });
-
-    // Write to disk
-    fs.writeFileSync(pngPath, buffer);
-    trace("PNG written to disk", { outputPath: pngPath });
-
     console.log(
-      `[visionDiagramSegmentation] Wrote rendered page PNG: ${pngPath} (${buffer.length} bytes)`
+      `[visionDiagramSegmentation] Wrote rendered page PNG: ${result.pngPath} (${result.width}x${result.height})`
     );
 
-    return pngPath;
+    return result.pngPath;
   } catch (err: any) {
     const msg = String(err?.message || err);
+
+    // Preserve the old "fake worker" defensive path (should not happen anymore,
+    // but we keep it for compatibility with existing logging/monitoring).
     if (msg.includes("Setting up fake worker failed")) {
       console.warn(
         `[visionDiagramSegmentation] PDF.js fake worker failed. Page ${pageNumber} will be skipped. ` +
-        `Vision segmentation will continue with remaining pages. Error: ${msg}`
+          `Vision segmentation will continue with remaining pages. Error: ${msg}`
       );
-      trace("PDF.js worker error caught - graceful skip", { pageNumber, error: msg });
-      return null; // Graceful degradation: signal that this page failed
+      trace("PDF.js worker error caught - graceful skip (via pdfRenderer)", {
+        pageNumber,
+        error: msg,
+      });
+      return null;
     }
-    // Re-throw other errors (genuine bugs that should surface)
+
+    // For all other errors, rethrow so real bugs surface during development
     throw err;
   }
 }
-
-// VisionSegmentationOptions now imported from .types file
 
 /**
  * Result for a single detected diagram region with normalized + pixel coords.
@@ -317,14 +155,18 @@ export interface DiagramRegionResult {
   width: number;
   height: number;
   /**
-   * Bounding box in absolute pixel coordinates on the rendered page image.
+   * Bounding box in pixel coordinates
    */
   xPx: number;
   yPx: number;
   widthPx: number;
   heightPx: number;
   /**
-   * Path to the cropped diagram image.
+   * Optional model confidence score
+   */
+  confidence?: number;
+  /**
+   * Filesystem path to the cropped diagram image
    */
   imagePath: string;
   /**
@@ -377,7 +219,7 @@ async function createOverlayImage(
   imageWidth: number,
   imageHeight: number
 ): Promise<void> {
-  // Load canvas module dynamically (same pattern as PDF rendering)
+  // Load canvas module dynamically
   const canvasModule = await loadCanvasModule();
   const canvasNs: any =
     canvasModule && (canvasModule as any).createCanvas
@@ -414,24 +256,38 @@ async function createOverlayImage(
     ctx.fillText(labelText, labelX, labelY);
   }
 
-  // Save the overlay image
+  // Write overlay image
   const buffer = canvas.toBuffer("image/png");
+  await ensureDir(path.dirname(outputPath));
   await fsp.writeFile(outputPath, buffer);
 }
 
 /**
- * Run the vision model on a single page to detect diagram regions.
+ * Detect diagram regions on a single page using Vision.
+ *
+ * - Renders the page to PNG (via Phase D pdfRenderer) if no pageImagePath is provided
+ * - Calls detectDiagramRegionsInImage(...)
+ * - Converts normalized [0..1] coords into pixel coords
+ * - Crops diagram regions to individual PNGs
+ * - Optionally writes debug overlay + JSON if VisionDebugOptions is enabled
  */
 export async function detectDiagramRegionsWithVision(
   options: VisionSegmentationOptions
 ): Promise<VisionSegmentationResult> {
   const { pdfPath, pageNumber, outDir, debug, visionDebugOptions } = options;
 
-  console.log('[visionDiagramSegmentation] === VISION SEGMENTATION CALLED ===');
-  console.log('[visionDiagramSegmentation] Page:', pageNumber, 'PDF:', pdfPath);
+  console.log(
+    "[visionDiagramSegmentation] === VISION SEGMENTATION CALLED ==="
+  );
+  console.log(
+    "[visionDiagramSegmentation] Page:",
+    pageNumber,
+    "PDF:",
+    pdfPath
+  );
 
   // Either use provided page image or render one from the PDF.
-  let pageImagePath = options.pageImagePath;
+  let pageImagePath = (options as any).pageImagePath as string | undefined;
   if (!pageImagePath) {
     const tempPagePath = path.join(
       outDir,
@@ -439,9 +295,12 @@ export async function detectDiagramRegionsWithVision(
       "vision-pages",
       `page-${pageNumber}.png`
     );
-    pageImagePath = await renderPdfPageToPng(pdfPath, pageNumber, tempPagePath);
 
-    // If rendering failed (e.g., fake worker error), return empty result gracefully
+    pageImagePath =
+      (await renderPdfPageToPng(pdfPath, pageNumber, tempPagePath)) ??
+      undefined;
+
+    // If rendering failed (e.g., underlying renderer error), return empty result gracefully
     if (!pageImagePath) {
       console.warn(
         `[visionDiagramSegmentation] Page ${pageNumber} could not be rendered. Returning empty result.`
@@ -458,7 +317,9 @@ export async function detectDiagramRegionsWithVision(
     pageNum: pageNumber,
     imagePath: pageImagePath,
     imageExists: fs.existsSync(pageImagePath),
-    imageSize: fs.existsSync(pageImagePath) ? fs.statSync(pageImagePath).size : 0
+    imageSize: fs.existsSync(pageImagePath)
+      ? fs.statSync(pageImagePath).size
+      : 0,
   });
 
   console.log(
@@ -473,7 +334,7 @@ export async function detectDiagramRegionsWithVision(
   trace("vision result for page", {
     pageNum: pageNumber,
     regionsFound: segmentationResult?.regions?.length ?? 0,
-    hasRawJson: !!segmentationResult?.rawJson
+    hasRawJson: !!segmentationResult?.rawJson,
   });
 
   if (!segmentationResult || !segmentationResult.regions?.length) {
@@ -495,9 +356,18 @@ export async function detectDiagramRegionsWithVision(
 
   if (!pageWidth || !pageHeight) {
     console.warn(
-      `[visionDiagramSegmentation] Could not read image dimensions for ${pageImagePath}`
+      `[visionDiagramSegmentation] Unable to determine image size for page ${pageNumber}. Returning empty result.`
     );
+    return {
+      page: pageNumber,
+      imagePath: pageImagePath,
+      regions: [],
+    };
   }
+
+  console.log(
+    `[visionDiagramSegmentation] Page image size: ${pageWidth}x${pageHeight}`
+  );
 
   const results: DiagramRegionResult[] = [];
 
@@ -534,13 +404,15 @@ export async function detectDiagramRegionsWithVision(
       .toFile(cropPath);
 
     const quality: "ok" | "needs_review" =
-      region.confidence && region.confidence < 0.6 ? "needs_review" : "ok";
+      (region as any).confidence && (region as any).confidence < 0.6
+        ? "needs_review"
+        : "ok";
 
-    results.push({
+    const result: DiagramRegionResult = {
       id,
       page: pageNumber,
       quality,
-      label: region.label,
+      label: (region as any).label,
       x: xNorm,
       y: yNorm,
       width: wNorm,
@@ -549,17 +421,16 @@ export async function detectDiagramRegionsWithVision(
       yPx,
       widthPx,
       heightPx,
+      confidence: (region as any).confidence,
       imagePath: cropPath,
       rawRegion: region,
-      rawJson: segmentationResult.rawJson,
-    });
+      rawJson: (segmentationResult as any).rawJson,
+    };
+
+    results.push(result);
   }
 
-  console.log(
-    `[visionDiagramSegmentation] Page ${pageNumber}: detected ${results.length} diagram region(s)`
-  );
-
-  // ===== DEBUG ARTIFACT GENERATION =====
+  // If debug options are provided, write debug artifacts
   if (visionDebugOptions?.enabled) {
     try {
       const debugRoot = visionDebugOptions.outputDir;
@@ -572,8 +443,14 @@ export async function detectDiagramRegionsWithVision(
 
       const padded = padPageNumber(pageNumber);
       const pagePngPath = path.join(pagesDir, `page-${padded}.png`);
-      const overlayPngPath = path.join(pagesDir, `page-${padded}_overlay.png`);
-      const segmentsJsonPath = path.join(segmentsDir, `page-${padded}_segments.json`);
+      const overlayPngPath = path.join(
+        pagesDir,
+        `page-${padded}_overlay.png`
+      );
+      const segmentsJsonPath = path.join(
+        segmentsDir,
+        `page-${padded}_segments.json`
+      );
 
       // 1. Save raw page PNG (copy from rendered page)
       await fsp.copyFile(pageImagePath, pagePngPath);
@@ -582,7 +459,13 @@ export async function detectDiagramRegionsWithVision(
       }
 
       // 2. Create overlay PNG with diagram boxes
-      await createOverlayImage(pageImagePath, results, overlayPngPath, pageWidth, pageHeight);
+      await createOverlayImage(
+        pageImagePath,
+        results,
+        overlayPngPath,
+        pageWidth,
+        pageHeight
+      );
       if (visionDebugOptions.debug) {
         console.log(`[visionDebug] Saved overlay: ${overlayPngPath}`);
       }
@@ -592,10 +475,10 @@ export async function detectDiagramRegionsWithVision(
         page: pageNumber,
         imagePath: `pages/page-${padded}.png`,
         regions: results,
-        rawJson: segmentationResult.rawJson,
+        rawJson: (segmentationResult as any).rawJson,
         metadata: {
           timestamp: new Date().toISOString(),
-          model: process.env.VISION_MODEL || "gpt-4o-mini",
+          model: process.env.VISION_MODEL ?? "gpt-4o-mini",
           imageWidth: pageWidth,
           imageHeight: pageHeight,
         },
@@ -607,10 +490,14 @@ export async function detectDiagramRegionsWithVision(
         "utf8"
       );
       if (visionDebugOptions.debug) {
-        console.log(`[visionDebug] Saved segments JSON: ${segmentsJsonPath}`);
+        console.log(`[visionDebug] Wrote segments JSON: ${segmentsJsonPath}`);
       }
-    } catch (error) {
-      console.error(`[visionDebug] Failed to save debug artifacts for page ${pageNumber}:`, error);
+    } catch (err: any) {
+      console.warn(
+        `[visionDebug] Failed to write debug artifacts for page ${pageNumber}: ${
+          err?.message || String(err)
+        }`
+      );
     }
   }
 
@@ -631,14 +518,13 @@ export async function detectDiagramRegionsMultiPage(
   options: DetectDiagramRegionsMultiPageOptions
 ): Promise<VisionSegmentationResult[]> {
   const { pdfPath, pages, outDir, debug, visionDebugOptions } = options;
-  const results: VisionSegmentationResult[] = [];
 
-  trace("visionDiagramSegmentation called", {
-    pageCount: pages.length,
-    pages: pages,
-    pdfPath,
-    hasDebugOptions: !!visionDebugOptions
-  });
+  console.log(
+    "[visionDiagramSegmentation] === MULTI-PAGE VISION SEGMENTATION ==="
+  );
+  console.log("[visionDiagramSegmentation] Pages:", pages.join(", "));
+
+  const results: VisionSegmentationResult[] = [];
 
   for (const pageNumber of pages) {
     try {
@@ -648,7 +534,7 @@ export async function detectDiagramRegionsMultiPage(
         outDir,
         debug,
         visionDebugOptions,
-      });
+      } as VisionSegmentationOptions);
 
       results.push(result);
 
@@ -662,7 +548,7 @@ export async function detectDiagramRegionsMultiPage(
       // Log the error but continue with other pages
       console.warn(
         `[visionDiagramSegmentation] Failed to process page ${pageNumber}. ` +
-        `Continuing with remaining pages. Error: ${msg}`
+          `Continuing with remaining pages. Error: ${msg}`
       );
       trace("vision segmentation page error", { pageNumber, error: msg });
 

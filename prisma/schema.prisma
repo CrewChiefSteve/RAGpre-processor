@@ -46,6 +46,7 @@ model Job {
 
   // Relations
   logs           Log[]
+  rulebooks      Rulebook[]
 }
 
 model Log {
@@ -76,4 +77,184 @@ model Settings {
   debug           Boolean @default(false)
 
   updatedAt       DateTime @updatedAt
+}
+
+// ============================================================================
+// RAG Preprocessor V2: Rulebook Models
+// ============================================================================
+
+model Rulebook {
+  id             String    @id @default(cuid())
+  title          String
+  series         String?   // e.g. "SVRA", "TA2"
+  year           Int?
+  version        String?
+  sourceUrl      String?
+  fileKey        String    // where the original PDF is stored (local path or blob key)
+  pageCount      Int?
+
+  ingestionJobId String?   // FK to Job
+  ingestionJob   Job?      @relation(fields: [ingestionJobId], references: [id])
+
+  sections       Section[]
+  rules          Rule[]
+  diagrams       Diagram[]
+  tables         Table[]
+  chunks         Chunk[]
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([ingestionJobId])
+}
+
+model Section {
+  id             String     @id @default(cuid())
+  rulebookId     String
+  rulebook       Rulebook   @relation(fields: [rulebookId], references: [id], onDelete: Cascade)
+
+  label          String?    // "3", "3.2", "3.2.4"
+  title          String
+  level          Int        // 1 = top-level, 2 = subsection, etc.
+  pageStart      Int?
+  pageEnd        Int?
+
+  parentSectionId String?
+  parentSection   Section?   @relation("SectionHierarchy", fields: [parentSectionId], references: [id], onDelete: SetNull)
+  children        Section[]  @relation("SectionHierarchy")
+
+  rules          Rule[]
+  diagrams       Diagram[]
+  tables         Table[]
+  chunks         Chunk[]
+
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@index([rulebookId])
+  @@index([label, rulebookId])
+  @@index([parentSectionId])
+}
+
+model Rule {
+  id          String    @id @default(cuid())
+  rulebookId  String
+  rulebook    Rulebook  @relation(fields: [rulebookId], references: [id], onDelete: Cascade)
+
+  sectionId   String?
+  section     Section?  @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+
+  code        String    // "3.2.4"
+  title       String?
+  text        String    // normalized rule text
+  pageStart   Int?
+  pageEnd     Int?
+
+  diagrams    Diagram[]
+  tables      Table[]
+  chunks      Chunk[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([rulebookId])
+  @@index([code, rulebookId])
+  @@index([sectionId])
+}
+
+model Diagram {
+  id           String    @id @default(cuid())
+  rulebookId   String
+  rulebook     Rulebook  @relation(fields: [rulebookId], references: [id], onDelete: Cascade)
+
+  sectionId    String?
+  section      Section?  @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+
+  ruleId       String?
+  rule         Rule?     @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+
+  page         Int?
+  // normalized 0–1 coords in JSON, e.g. { x, y, width, height }
+  boundingBox  String?   // JSON as String for SQLite
+
+  imageKey     String    // "rulebooks/{rulebookId}/diagrams/{page}-{index}.png"
+  publicUrl    String?   // public URL after upload
+
+  caption      String?   // short summary
+  explanation  String?   // longer AI-generated explanation
+  tags         String?   // JSON array of strings as String for SQLite
+  refersToRuleCode String?
+
+  chunks       Chunk[]   // e.g. diagram caption chunks
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([rulebookId])
+  @@index([ruleId])
+  @@index([sectionId])
+}
+
+model Table {
+  id           String    @id @default(cuid())
+  rulebookId   String
+  rulebook     Rulebook  @relation(fields: [rulebookId], references: [id], onDelete: Cascade)
+
+  sectionId    String?
+  section      Section?  @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+
+  ruleId       String?
+  rule         Rule?     @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+
+  page         Int?
+  boundingBox  String?   // JSON as String for SQLite
+
+  jsonData     String?   // structured rows + headers as JSON string
+  markdown     String?   // LLM-friendly representation
+
+  chunks       Chunk[]
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([rulebookId])
+  @@index([ruleId])
+  @@index([sectionId])
+}
+
+model Chunk {
+  id           String    @id @default(cuid())
+  rulebookId   String
+  rulebook     Rulebook  @relation(fields: [rulebookId], references: [id], onDelete: Cascade)
+
+  sectionId    String?
+  section      Section?  @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+
+  ruleId       String?
+  rule         Rule?     @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+
+  diagramId    String?
+  diagram      Diagram?  @relation(fields: [diagramId], references: [id], onDelete: SetNull)
+
+  tableId      String?
+  table        Table?    @relation(fields: [tableId], references: [id], onDelete: SetNull)
+
+  type         String    // "NARRATIVE" | "RULE" | "TABLE" | "DIAGRAM_CAPTION"
+  pageStart    Int?
+  pageEnd      Int?
+  text         String
+  tokenCount   Int?
+
+  // Either store embedding in DB or reference external vector store
+  embedding    Bytes?    // SQLite supports Bytes for binary data
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([rulebookId])
+  @@index([ruleId])
+  @@index([diagramId])
+  @@index([tableId])
+  @@index([type])
+  @@index([sectionId])
 }

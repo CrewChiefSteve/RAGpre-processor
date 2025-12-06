@@ -68,7 +68,12 @@
       "Bash(cmd /c \"if exist .next rd /s /q .next\")",
       "Bash(cmd /c \"if exist node_modules\\.cache rd /s /q node_modules\\.cache\")",
       "Bash(cmd /c \"rd /s /q .next 2>nul & rd /s /q node_modules\\.cache 2>nul\")",
-      "Bash(cmd /c:*)"
+      "Bash(cmd /c:*)",
+      "Bash(pnpm run build:web:*)",
+      "Bash(pnpm run prisma:migrate:*)",
+      "Bash(npx tsx test-phase-e.ts)",
+      "Bash(pnpm build:*)",
+      "Bash(pnpm lint:*)"
     ],
     "deny": [],
     "ask": []

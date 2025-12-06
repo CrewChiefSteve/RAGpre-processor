@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import JobDetail from '@/components/JobDetail';
 import { prisma } from '@/lib/db';
 import { dbJobToPreprocessJob, dbJobToOutputs } from '@/lib/types/job';
+import { getRulebookMetricsForJob } from '@/src/lib/metrics/rulebookMetrics';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,6 +31,9 @@ export default async function JobDetailPage({ params }: JobDetailPageProps) {
     initialOutputs = dbJobToOutputs(dbJob);
   }
 
+  // Fetch rulebook metrics for this job
+  const rulebookMetrics = await getRulebookMetricsForJob(prisma, id);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
@@ -48,6 +52,7 @@ export default async function JobDetailPage({ params }: JobDetailPageProps) {
         jobId={id}
         initialJob={job}
         initialOutputs={initialOutputs}
+        rulebookMetrics={rulebookMetrics}
       />
     </div>
   );
