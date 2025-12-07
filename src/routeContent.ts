@@ -1,4 +1,4 @@
-import type { AnalyzeResult } from "@azure/ai-form-recognizer";
+import type { AnalyzeResult } from "./analyzePdf";
 import type {
   RoutedContent,
   NarrativeChunk,

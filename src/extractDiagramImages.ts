@@ -3,6 +3,7 @@ import fs from "fs";
 import sharp from "sharp";
 import type { DiagramAsset } from "./types";
 import { ensureDir } from "./utils/fsUtils";
+import { renderSinglePageToPng } from "./pipeline/render/pdfRenderer";
 
 /**
  * Extract diagram images from a document
@@ -14,124 +15,22 @@ import { ensureDir } from "./utils/fsUtils";
  * - Crops diagram regions using bounding boxes
  *
  * For PDF documents (pdf_digital origin):
- * - Requires PDF-to-image rendering (see note below)
+ * - Uses Phase D pdfRenderer to convert PDF pages to PNG
  * - Crops diagram regions from rendered pages
- *
- * NOTE: PDF rendering requires additional dependencies:
- * - Install: npm install canvas pdfjs-dist
- * - pdfjs-dist: Mozilla's PDF renderer
- * - canvas: Node.js canvas implementation for PDF rendering
- *
- * If these dependencies are not installed, PDF diagram extraction will be skipped
- * with a warning message.
  */
-
-/**
- * Check if PDF rendering dependencies are available
- */
-function checkPdfRenderingAvailable(): boolean {
-  try {
-    // Try to dynamically require - will throw if not installed
-    eval("require.resolve('canvas')");
-    eval("require.resolve('pdfjs-dist')");
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Lazy loader for PDF.js module (server-only)
- * This module is only used in the server-side job pipeline,
- * so we always load the Node/legacy build.
- */
-let _pdfjsModuleCache: any = null;
-
-async function loadPdfJsModule() {
-  if (!_pdfjsModuleCache) {
-    _pdfjsModuleCache = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  }
-  return _pdfjsModuleCache;
-}
-
-/**
- * Render a PDF page to PNG (requires canvas + pdfjs-dist)
- */
-async function renderPdfPage(
-  pdfPath: string,
-  pageNumber: number,
-  outputPath: string
-): Promise<void> {
-  // Load PDF.js and canvas using dynamic imports
-  const pdfjsLibModule = await loadPdfJsModule();
-  const pdfjsLib = pdfjsLibModule?.default || pdfjsLibModule;
-
-  const canvasModule = await import("canvas");
-  const { createCanvas } = canvasModule?.default || canvasModule;
-
-  // Check if we're in Node.js environment
-  const isNode = typeof window === "undefined";
-
-  console.log("[pdfjs-config]", {
-    file: "extractDiagramImages.ts",
-    isNode,
-    disableWorker: isNode,
-    pdfjsVersion: pdfjsLib?.version || "unknown",
-  });
-
-  try {
-    // Load PDF with worker disabled for Node.js server environment
-    // 🔴 KEY FIX: NEVER use workers in Node
-    const loadingTask = pdfjsLib.getDocument({
-      url: pdfPath,
-      useWorkerFetch: false,
-      isEvalSupported: false,
-      useSystemFonts: true,
-      disableFontFace: true,
-      disableWorker: isNode, // Force disable worker in Node.js
-    });
-
-    const pdf = await loadingTask.promise;
-
-    // Get page
-    const page = await pdf.getPage(pageNumber);
-    const viewport = page.getViewport({ scale: 2.0 }); // 2x scale for quality
-
-    // Create canvas
-    const canvas = createCanvas(viewport.width, viewport.height);
-    const context = canvas.getContext("2d");
-
-    // Render page
-    await page.render({
-      canvasContext: context as any,
-      viewport: viewport,
-    }).promise;
-
-    // Save as PNG
-    const buffer = canvas.toBuffer("image/png");
-    await fs.promises.writeFile(outputPath, buffer);
-  } catch (err: any) {
-    const msg = String(err?.message || err);
-    if (msg.includes("Setting up fake worker failed")) {
-      console.error(
-        `[extractDiagramImages] PDF.js worker init failed (this should not happen with disableWorker: true). ` +
-        `Page ${pageNumber} will be skipped. Error: ${msg}`
-      );
-      throw new Error(`PDF rendering failed: ${msg}`);
-    }
-    // Re-throw other errors
-    throw err;
-  }
-}
 
 /**
  * Crop a diagram region from a full page image
- * Azure bounding boxes are in normalized coordinates (0-1 scale)
+ *
+ * Handles two coordinate systems:
+ * 1. Azure figures: polygon in inches (from page origin)
+ * 2. Vision segments: polygon in pixels (already on rendered image)
  */
 async function cropDiagramRegion(
   sourceImagePath: string,
-  boundingBox: any, // Azure BoundingRegion polygon
-  outputPath: string
+  boundingBox: any, // Azure BoundingRegion or Vision bounding box
+  outputPath: string,
+  azurePageDimensions?: { width: number; height: number } // Page dimensions in inches (from Azure)
 ): Promise<void> {
   // Azure provides polygon points, we need to find bounding rectangle
   const polygon = boundingBox.polygon;
@@ -139,7 +38,7 @@ async function cropDiagramRegion(
     throw new Error("No polygon data in bounding box");
   }
 
-  // Get image dimensions to convert normalized coordinates
+  // Get rendered image dimensions
   const metadata = await sharp(sourceImagePath).metadata();
   if (!metadata.width || !metadata.height) {
     throw new Error("Could not read image dimensions");
@@ -148,15 +47,36 @@ async function cropDiagramRegion(
   const imgWidth = metadata.width;
   const imgHeight = metadata.height;
 
-  // Convert polygon to pixel coordinates and find bounding rectangle
+  // Determine coordinate system and convert polygon to pixels
   const xCoords = [];
   const yCoords = [];
 
-  for (let i = 0; i < polygon.length; i += 2) {
-    const x = polygon[i] * imgWidth;
-    const y = polygon[i + 1] * imgHeight;
-    xCoords.push(x);
-    yCoords.push(y);
+  // Check if this is a Vision segment (has _visionPixels marker)
+  if (boundingBox._visionPixels) {
+    // Vision coordinates are already in pixels on the rendered image
+    console.log(`[cropDiagramRegion] Using Vision pixel coordinates`);
+    const { x, y, width, height } = boundingBox._visionPixels;
+    xCoords.push(x, x + width);
+    yCoords.push(y, y + height);
+  } else if (azurePageDimensions) {
+    // Azure coordinates are in inches - convert to pixels
+    console.log(`[cropDiagramRegion] Converting Azure inches to pixels (page: ${azurePageDimensions.width}x${azurePageDimensions.height} in, image: ${imgWidth}x${imgHeight} px)`);
+    const scaleX = imgWidth / azurePageDimensions.width;
+    const scaleY = imgHeight / azurePageDimensions.height;
+
+    for (let i = 0; i < polygon.length; i += 2) {
+      const xInches = polygon[i];
+      const yInches = polygon[i + 1];
+      xCoords.push(xInches * scaleX);
+      yCoords.push(yInches * scaleY);
+    }
+  } else {
+    // Fallback: assume normalized coordinates (0-1 scale) - legacy behavior
+    console.warn(`[cropDiagramRegion] No Azure page dimensions provided, assuming normalized coordinates`);
+    for (let i = 0; i < polygon.length; i += 2) {
+      xCoords.push(polygon[i] * imgWidth);
+      yCoords.push(polygon[i + 1] * imgHeight);
+    }
   }
 
   const left = Math.max(0, Math.floor(Math.min(...xCoords)));
@@ -188,11 +108,17 @@ async function cropDiagramRegion(
 /**
  * Extract diagram images from document
  * Returns updated DiagramAsset array with imagePath filled
+ *
+ * @param diagrams - Array of diagram assets with bounding boxes
+ * @param normalizedPath - Path to normalized document (PDF or image)
+ * @param outDir - Output directory for extracted images
+ * @param azureResult - Optional Azure analysis result for page dimensions
  */
 export async function extractDiagramImages(
   diagrams: DiagramAsset[],
   normalizedPath: string,
-  outDir: string
+  outDir: string,
+  azureResult?: any // AnalyzeResult from Azure Document Intelligence
 ): Promise<DiagramAsset[]> {
   if (diagrams.length === 0) {
     console.log("[extractDiagramImages] No diagrams to extract");
@@ -205,20 +131,24 @@ export async function extractDiagramImages(
   const imagesDir = path.join(outDir, "diagrams", "images");
   ensureDir(imagesDir);
 
+  // Build a map of page numbers to dimensions (in inches) from Azure result
+  const pageDimensionsMap = new Map<number, { width: number; height: number }>();
+  if (azureResult?.pages) {
+    for (const page of azureResult.pages) {
+      const pageNum = page.pageNumber ?? 0;
+      if (page.width && page.height) {
+        pageDimensionsMap.set(pageNum, {
+          width: page.width,
+          height: page.height,
+        });
+      }
+    }
+    console.log(`[extractDiagramImages] Loaded dimensions for ${pageDimensionsMap.size} page(s) from Azure`);
+  }
+
   const updated: DiagramAsset[] = [];
   const ext = path.extname(normalizedPath).toLowerCase();
   const isPdf = ext === ".pdf";
-
-  // Check PDF rendering availability
-  if (isPdf && !checkPdfRenderingAvailable()) {
-    console.warn(
-      "[extractDiagramImages] PDF rendering dependencies not installed.\n" +
-      "  To enable PDF diagram extraction, run:\n" +
-      "  npm install canvas pdfjs-dist\n" +
-      "  Skipping diagram extraction for now."
-    );
-    return diagrams.map(d => ({ ...d, imagePath: "" }));
-  }
 
   for (const diagram of diagrams) {
     try {
@@ -229,11 +159,16 @@ export async function extractDiagramImages(
       let pageImagePath: string;
 
       if (isPdf) {
-        // Render PDF page to temp image
+        // Render PDF page using Phase D renderer (temp file)
         const tempPagePath = path.join(imagesDir, `temp_page_${diagram.page}.png`);
 
         console.log(`[extractDiagramImages] Rendering PDF page ${diagram.page} for ${diagram.id}`);
-        await renderPdfPage(normalizedPath, diagram.page!, tempPagePath);
+        await renderSinglePageToPng({
+          pdfPath: normalizedPath,
+          pageNumber: diagram.page!,
+          pngPath: tempPagePath,
+          scale: 2.0,
+        });
 
         pageImagePath = tempPagePath;
       } else {
@@ -245,8 +180,16 @@ export async function extractDiagramImages(
       console.log(`[extractDiagramImages] Extracting ${diagram.id} to ${imagePath}`);
 
       if (diagram.boundingBox) {
-        // Crop using Azure bounding box
-        await cropDiagramRegion(pageImagePath, diagram.boundingBox, imagePath);
+        // Get page dimensions for this diagram
+        const pageDims = diagram.page ? pageDimensionsMap.get(diagram.page) : undefined;
+
+        // Crop using bounding box with appropriate coordinate system
+        await cropDiagramRegion(
+          pageImagePath,
+          diagram.boundingBox,
+          imagePath,
+          pageDims
+        );
       } else {
         // No bounding box - copy full page as fallback
         console.warn(`[extractDiagramImages] No bounding box for ${diagram.id}, using full page`);

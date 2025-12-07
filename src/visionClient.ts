@@ -33,37 +33,84 @@ export async function captionDiagramImage(
 ): Promise<string | null> {
   if (!openai) return null;
 
-  const base64 = await readImageAsBase64(imagePath);
-  const prompt = [
-    "You are analyzing a technical diagram from a racing rulebook.",
-    "Describe all labeled parts, dimensions, limits, and constraints.",
-    "Focus on information useful for race setup and legality checks.",
-  ];
-  if (extraContext && extraContext.trim()) {
-    prompt.push(`Additional context: ${extraContext.trim()}`);
+  // Validate image exists and has content
+  const stats = await fs.promises.stat(imagePath);
+  if (stats.size < 100) {
+    console.warn(`[visionClient] Image too small (${stats.size} bytes): ${imagePath}`);
+    return null;
   }
 
-  const response = await openai.chat.completions.create({
-    model: process.env.VISION_MODEL ?? "gpt-4o-mini",
-    messages: [
-      {
-        role: "user",
-        content: [
-          { type: "text", text: prompt.join("\n") },
-          {
-            type: "image_url",
-            image_url: { url: `data:image/png;base64,${base64}` },
-          },
-        ],
-      },
-    ],
-  });
+  const base64 = await readImageAsBase64(imagePath);
 
-  const content = response.choices[0]?.message?.content;
-  if (!content) return null;
+  // Improved prompt that handles both technical diagrams AND non-technical images
+  const prompt = [
+    "Analyze this image extracted from a racing rulebook PDF.",
+    "",
+    "IMPORTANT: Describe what you ACTUALLY SEE in this specific image.",
+    "",
+    "If this is a TECHNICAL DIAGRAM (showing measurements, angles, parts, specifications):",
+    "- List the labeled components visible in the image",
+    "- Note any dimensions, angles, or measurements shown",
+    "- Describe limits, constraints, or requirements indicated",
+    "- Explain what this diagram is used for in race preparation or inspection",
+    "",
+    "If this is a LOGO, PHOTO, or DECORATIVE IMAGE:",
+    "- Identify what it shows (e.g., 'SVRA organization logo', 'Photo of a race car')",
+    "- Note it is not a technical diagram",
+    "- Keep description brief (1-2 sentences)",
+    "",
+    "Be factual and specific. Only describe what you can actually see in the image.",
+  ];
 
-  // content is a string in this SDK version
-  return typeof content === "string" ? content : JSON.stringify(content);
+  if (extraContext && extraContext.trim()) {
+    prompt.push("");
+    prompt.push(`Additional context from the document: ${extraContext.trim()}`);
+  }
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: process.env.VISION_MODEL ?? "gpt-4o-mini",
+      max_tokens: 2000,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: prompt.join("\n") },
+            {
+              type: "image_url",
+              image_url: {
+                url: `data:image/png;base64,${base64}`,
+                detail: "high" // Request high detail for better technical diagram analysis
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const content = response.choices[0]?.message?.content;
+    if (!content) {
+      console.warn(`[visionClient] No content returned for ${imagePath}`);
+      return null;
+    }
+
+    // content is a string in this SDK version
+    const description = typeof content === "string" ? content : JSON.stringify(content);
+
+    // Detect if model refused (boilerplate response)
+    if (description.includes("I'm unable to make observations") ||
+        description.includes("I cannot")) {
+      console.warn(`[visionClient] Model refused to analyze ${imagePath}`);
+      console.warn(`[visionClient] Response: ${description.substring(0, 200)}...`);
+      return null; // Return null instead of boilerplate
+    }
+
+    return description;
+
+  } catch (error: any) {
+    console.error(`[visionClient] Failed to caption ${imagePath}:`, error.message);
+    return null;
+  }
 }
 
 export async function transcribeHandwritingImage(

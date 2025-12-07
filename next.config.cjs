@@ -3,7 +3,7 @@ const nextConfig = {
   reactStrictMode: true,
   // Allow ES modules from our src/ directory
   experimental: {
-    serverComponentsExternalPackages: ['sharp', '@azure/ai-form-recognizer', 'pdfjs-dist', 'canvas'],
+    serverComponentsExternalPackages: ['sharp', '@azure-rest/ai-document-intelligence', 'pdfjs-dist', 'canvas'],
   },
   // Webpack config to handle ESM modules
   webpack: (config, { isServer }) => {

@@ -300,7 +300,8 @@ export async function runPipeline(config: PipelineConfig): Promise<PipelineResul
     diagramsWithImages = await extractDiagramImages(
       routed.diagrams,
       normalized.normalizedPath,
-      outDir
+      outDir,
+      result // Pass Azure result for page dimensions
     );
   }
 

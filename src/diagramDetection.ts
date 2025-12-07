@@ -1,4 +1,4 @@
-import type { AnalyzeResult } from "@azure/ai-form-recognizer";
+import type { AnalyzeResult } from "./analyzePdf";
 import type { DiagramAsset, DocumentOrigin, ContentQuality } from "./types";
 import type {
   DetectDiagramRegionsMultiPageOptions,
@@ -116,10 +116,12 @@ export async function detectDiagrams(
 
   // ===== PASS 1: Azure Figures =====
   trace("starting pass 1 (Azure Figures)");
-  const figures = (result as any).figures;
+
+  // The new SDK returns figures directly on the result object
+  const figures = result.figures;
 
   if (figures && Array.isArray(figures) && figures.length > 0) {
-    console.log(`[diagramDetection] Found ${figures.length} Azure figure(s) in document`);
+    console.log(`[diagramDetection] ✓ Found ${figures.length} Azure figure(s) in document (NEW SDK)`);
 
     for (const figure of figures) {
       const boundingRegion = figure.boundingRegions?.[0];
@@ -128,16 +130,28 @@ export async function detectDiagrams(
       const pageNumber = boundingRegion.pageNumber ?? 1;
       pagesWithDiagrams.add(pageNumber);
 
-      // Extract caption text from nearby paragraphs
-      const rawCaptionText = extractCaptionFromParagraphs(result, pageNumber);
+      // NEW SDK: Figures now have built-in caption property
+      let rawCaptionText = figure.caption?.content;
 
-      // Get confidence if available
+      // Fallback: Try to extract caption from nearby paragraphs if not provided
+      if (!rawCaptionText) {
+        rawCaptionText = extractCaptionFromParagraphs(result, pageNumber);
+      }
+
+      // Get confidence if available (may not be present in all versions)
       const confidence = (figure as any).confidence as number | undefined;
       const quality = classifyDiagramQuality(confidence);
 
-      // Generate a title from caption or use default
+      // Generate a title from figure.id, caption, or use default
       let title: string | undefined;
-      if (rawCaptionText) {
+
+      // Try to use the figure ID (e.g., "1.1" for page 1, figure 1)
+      if (figure.id) {
+        title = `Figure ${figure.id}`;
+      }
+
+      // Or parse from caption text
+      if (!title && rawCaptionText) {
         const match = rawCaptionText.match(/^(Figure|Fig\.?|Diagram|Image)\s+([\dA-Z][\dA-Z.-]*)/i);
         if (match) {
           title = match[0].trim();
@@ -149,7 +163,7 @@ export async function detectDiagrams(
       diagrams.push({
         id: diagramId,
         sectionPath: [`Page ${pageNumber}`],
-        title: title ?? `Diagram on page ${pageNumber}`,
+        title: title ?? `Figure on page ${pageNumber}`,
         imagePath: "", // Will be filled by extractDiagramImages
         description: undefined,
         sourcePdf,
@@ -166,11 +180,13 @@ export async function detectDiagrams(
 
       if (debug) {
         console.log(
-          `[diagramDetection] Azure figure ${diagramId} on page ${pageNumber}` +
+          `[diagramDetection] Azure figure ${diagramId} (id: ${figure.id}) on page ${pageNumber}` +
           (rawCaptionText ? ` with caption: "${rawCaptionText.slice(0, 50)}..."` : "")
         );
       }
     }
+  } else {
+    console.log(`[diagramDetection] No figures detected by Azure (will try vision segmentation if enabled)`);
   }
 
   trace("pass 1 complete (Azure Figures)", { foundCount: azureFigureCount });

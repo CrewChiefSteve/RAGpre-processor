@@ -82,6 +82,10 @@ const defaultLogger: Logger = {
 /* -------------------------------------------------------------------------- */
 
 class NodeCanvasFactory {
+  // CRITICAL FIX: PDF.js legacy build needs this static property to access createCanvas
+  // Without this, you get: "Cannot read properties of undefined (reading 'createCanvas')"
+  static createCanvas = createCanvas;
+
   create(width: number, height: number) {
     const canvas = createCanvas(Math.floor(width), Math.floor(height));
     const context = canvas.getContext("2d");
@@ -108,7 +112,7 @@ class NodeCanvasFactory {
 
   // Some pdf.js builds may call this internally
   _createCanvas(width: number, height: number) {
-    return this.create(width, height).canvas;
+    return createCanvas(Math.floor(width), Math.floor(height));
   }
 }
 

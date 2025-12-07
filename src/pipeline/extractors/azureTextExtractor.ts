@@ -3,9 +3,8 @@
  * Wraps Azure Document Intelligence API and normalizes to PageText[].
  */
 
-import { AzureKeyCredential } from "@azure/core-auth";
-import { DocumentAnalysisClient, type AnalyzeResult } from "@azure/ai-form-recognizer";
 import { AZURE_DOC_ENDPOINT, AZURE_DOC_KEY } from "../../config";
+import { analyzePdf, type AnalyzeResult } from "../../analyzePdf";
 import { NormalizedDocument, PageText, TextBlock, ExtractedTable, BBox } from "../types";
 
 export interface AzureExtractorOptions {
@@ -28,26 +27,31 @@ export async function extractPageTextWithAzure(
   const model = options.model || "prebuilt-layout";
   console.log(`[azureTextExtractor] Analyzing ${doc.pageCount} pages with Azure (model: ${model})`);
 
-  // Call Azure Document Intelligence API
-  const client = new DocumentAnalysisClient(
-    AZURE_DOC_ENDPOINT,
-    new AzureKeyCredential(AZURE_DOC_KEY)
-  );
+  // Call the new analyzePdf function which uses the updated SDK
+  // Note: analyzePdf expects a file path, but we have a buffer
+  // For now, we'll need to write the buffer to a temp file
+  const fs = await import("fs/promises");
+  const os = await import("os");
+  const pathModule = await import("path");
 
-  const poller = await client.beginAnalyzeDocument(model, doc.pdfBuffer);
-  const result = await poller.pollUntilDone();
+  const tempPath = pathModule.join(os.tmpdir(), `azure-extract-${Date.now()}.pdf`);
+  await fs.writeFile(tempPath, doc.pdfBuffer);
 
-  if (!result) {
-    throw new Error("No result from Azure Document Intelligence");
+  try {
+    const result = await analyzePdf(tempPath);
+
+    console.log(
+      `[azureTextExtractor] Azure returned ${result.pages?.length ?? 0} pages, ` +
+      `${result.paragraphs?.length ?? 0} paragraphs, ${result.tables?.length ?? 0} tables, ` +
+      `${result.figures?.length ?? 0} figures`
+    );
+
+    // Normalize Azure result into PageText[]
+    return normalizeAzureResult(result, doc.pageCount);
+  } finally {
+    // Clean up temp file
+    await fs.unlink(tempPath).catch(() => {});
   }
-
-  console.log(
-    `[azureTextExtractor] Azure returned ${result.pages?.length ?? 0} pages, ` +
-    `${result.paragraphs?.length ?? 0} paragraphs, ${result.tables?.length ?? 0} tables`
-  );
-
-  // Normalize Azure result into PageText[]
-  return normalizeAzureResult(result, doc.pageCount);
 }
 
 /**

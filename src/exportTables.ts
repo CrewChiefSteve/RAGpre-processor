@@ -2,7 +2,7 @@ import path from "path";
 import fs from "fs";
 import { ensureDir, writeTextFile } from "./utils/fsUtils";
 import type { TableAsset, NarrativeChunk, ContentQuality } from "./types";
-import type { AnalyzeResult } from "@azure/ai-form-recognizer";
+import type { AnalyzeResult } from "./analyzePdf";
 
 // Phase C: Maximum rows to show in markdown preview
 const MAX_PREVIEW_ROWS = 20;
