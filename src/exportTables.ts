@@ -10,7 +10,7 @@ const MAX_PREVIEW_ROWS = 20;
 // Phase C: Normalize header signature for grouping multi-page tables
 function buildHeaderSignature(row: string[]): string {
   return row
-    .map((cell) => cell.trim().toLowerCase().replace(/\s+/g, " "))
+    .map((cell: string) => cell.trim().toLowerCase().replace(/\s+/g, " "))
     .join(" | ");
 }
 
@@ -41,9 +41,9 @@ function extractAzureTableRows(azureTable: any): string[][] {
 
 function toCsv(rows: string[][]): string {
   return rows
-    .map((row) =>
+    .map((row: string[]) =>
       row
-        .map((cell) => `"${cell.replace(/"/g, '""')}"`)
+        .map((cell: string) => `"${cell.replace(/"/g, '""')}"`)
         .join(",")
     )
     .join("\n");
@@ -62,7 +62,7 @@ export async function exportTables(
 
   // Phase C: Step 2.3 - Pair Azure tables with TableAsset and derive header info
   const azureTables = result.tables;
-  const tablePairs = azureTables.map((azureTable, idx) => {
+  const tablePairs = azureTables.map((azureTable: any, idx: number) => {
     const asset = tables[idx]; // existing asset from routeContent
     const rows = extractAzureTableRows(azureTable);
 
@@ -75,8 +75,8 @@ export async function exportTables(
     let tableConfidence: number | undefined = undefined;
     if (azureTable.cells && azureTable.cells.length > 0) {
       const confidences = azureTable.cells
-        .map((cell) => (cell as any).confidence as number | undefined)
-        .filter((c): c is number => c !== undefined);
+        .map((cell: any) => (cell as any).confidence as number | undefined)
+        .filter((c: number | undefined): c is number => c !== undefined);
       if (confidences.length > 0) {
         tableConfidence = Math.min(...confidences);
       }
@@ -115,7 +115,7 @@ export async function exportTables(
     logicalTableIdx++;
 
     // Sort by page number
-    groupPairs.sort((a, b) => a.pageNum - b.pageNum);
+    groupPairs.sort((a: any, b: any) => a.pageNum - b.pageNum);
 
     // Use the first asset as the base
     const firstAsset = groupPairs[0].asset;
@@ -138,7 +138,7 @@ export async function exportTables(
     const pageRange: [number, number] = [minPage, maxPage];
 
     // Combine qualities from all fragments
-    const combinedQuality = combineQuality(groupPairs.map((p) => p.quality));
+    const combinedQuality = combineQuality(groupPairs.map((p: any) => p.quality));
 
     // Create logical table ID and paths
     const logicalTableId = `table_${logicalTableIdx}`;
@@ -190,11 +190,11 @@ Header: ${headerRow.join(" | ")}
     // Phase C: Generate markdown preview (first N rows for human inspection)
     const previewRows = [headerRow, ...allDataRows.slice(0, MAX_PREVIEW_ROWS)];
 
-    const markdownHeader = "|" + headerRow.map((h) => h || " ").join("|") + "|";
-    const markdownSeparator = "|" + headerRow.map(() => "---").join("|") + "|";
+    const markdownHeader = "|" + headerRow.map((h: string) => h || " ").join("|") + "|";
+    const markdownSeparator = "|" + headerRow.map((_: string) => "---").join("|") + "|";
     const markdownBody = previewRows
       .slice(1)
-      .map((row) => "|" + row.map((cell) => cell || " ").join("|") + "|")
+      .map((row: string[]) => "|" + row.map((cell: string) => cell || " ").join("|") + "|")
       .join("\n");
 
     const previewText = [

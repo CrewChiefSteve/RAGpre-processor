@@ -1,9 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  // Allow ES modules from our src/ directory
+  // Allow ES modules for sharp (image processing in web context)
   experimental: {
-    serverComponentsExternalPackages: ['sharp', '@azure-rest/ai-document-intelligence', 'pdfjs-dist', 'canvas'],
+    serverComponentsExternalPackages: ['sharp'],
   },
   // Webpack config to handle ESM modules
   webpack: (config, { isServer }) => {
