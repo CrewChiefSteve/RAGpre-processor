@@ -17,6 +17,7 @@ import { extractPageText } from "./pipeline/pageTextExtractor";
 // Phase C: Structure detection and compilation
 import { compileStructure } from "./pipeline/structure/structureCompiler";
 import { PrismaClient } from "@prisma/client";
+import type { PipelineLogger } from "./fileLogger";
 
 // Phase D: Rendering & Diagrams
 import { renderPdfPagesToPngs } from "./pipeline/render/pdfRenderer";
@@ -38,6 +39,7 @@ export interface PipelineConfig {
   maxVisionPages?: number;
   debug?: boolean;
   visionDebug?: boolean;
+  logger?: PipelineLogger;
   // Phase C: Optional Prisma integration
   prisma?: PrismaClient;
   rulebookId?: string;
@@ -84,12 +86,22 @@ export async function runPipeline(config: PipelineConfig): Promise<PipelineResul
     enableVisionSegmentation = false,
     maxVisionPages = 20,
     debug = false,
-    visionDebug = false
+    visionDebug = false,
+    logger
   } = config;
+
+  // Helper to log with optional logger
+  const log = (phase: string, level: "DEBUG" | "INFO" | "WARN" | "ERROR", message: string, data?: Record<string, any>) => {
+    if (logger) {
+      logger.log(phase, level, message, data);
+    }
+  };
 
   // Ensure directories exist
   ensureDir(outDir);
   ensureDir(tempDir);
+
+  log("pipeline", "INFO", "Pipeline started", { inputPath, outDir });
 
   // Phase A: Normalize input (PDF or image)
   const normalized = await normalizeInput(inputPath, outDir);
@@ -361,6 +373,15 @@ export async function runPipeline(config: PipelineConfig): Promise<PipelineResul
     path.join(outDir, "manifest.json"),
     JSON.stringify(manifest, null, 2)
   );
+
+  log("pipeline", "INFO", "Pipeline completed successfully", {
+    okCount,
+    lowConfidenceCount,
+    handwritingCount,
+    narrativeChunks: narrativeChunks.length,
+    tables: updatedTables.length,
+    diagrams: updatedDiagrams.length,
+  });
 
   return {
     manifest,

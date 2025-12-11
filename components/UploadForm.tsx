@@ -2,6 +2,7 @@
 
 import { useState, useRef, DragEvent, ChangeEvent } from 'react';
 import { useRouter } from 'next/navigation';
+import Toggle from './ui/Toggle';
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 
@@ -356,57 +357,43 @@ export default function UploadForm({ initialSettings }: UploadFormProps = {}) {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="flex items-center">
-            <input
-              type="checkbox"
+        <div className="space-y-4 p-4 bg-gray-50 dark:bg-gray-900 rounded-lg">
+          <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">
+            Processing Features
+          </h4>
+          <div className="space-y-3">
+            <Toggle
               id="enableTables"
+              label="Extract Tables"
+              description="Enable table detection and CSV export (Phase C)"
+              icon="📋"
               checked={enableTables}
-              onChange={(e) => setEnableTables(e.target.checked)}
-              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+              onChange={setEnableTables}
             />
-            <label htmlFor="enableTables" className="ml-2 text-sm text-gray-700 dark:text-gray-300">
-              Enable Tables (Phase C)
-            </label>
-          </div>
-
-          <div className="flex items-center">
-            <input
-              type="checkbox"
+            <Toggle
               id="handwritingVision"
+              label="Handwriting Recognition"
+              description="Use AI vision to transcribe handwritten notes (Phase D)"
+              icon="✍️"
               checked={handwritingVision}
-              onChange={(e) => setHandwritingVision(e.target.checked)}
-              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+              onChange={setHandwritingVision}
             />
-            <label htmlFor="handwritingVision" className="ml-2 text-sm text-gray-700 dark:text-gray-300">
-              Handwriting Vision (Phase D)
-            </label>
-          </div>
-
-          <div className="flex items-center">
-            <input
-              type="checkbox"
+            <Toggle
               id="captionDiagrams"
+              label="Diagram Captioning"
+              description="Generate AI descriptions for diagrams and figures (Phase D)"
+              icon="🖼️"
               checked={captionDiagrams}
-              onChange={(e) => setCaptionDiagrams(e.target.checked)}
-              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+              onChange={setCaptionDiagrams}
             />
-            <label htmlFor="captionDiagrams" className="ml-2 text-sm text-gray-700 dark:text-gray-300">
-              Caption Diagrams (Phase D)
-            </label>
-          </div>
-
-          <div className="flex items-center">
-            <input
-              type="checkbox"
+            <Toggle
               id="debug"
+              label="Debug Mode"
+              description="Save diagnostic artifacts for troubleshooting"
+              icon="🐛"
               checked={debug}
-              onChange={(e) => setDebug(e.target.checked)}
-              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+              onChange={setDebug}
             />
-            <label htmlFor="debug" className="ml-2 text-sm text-gray-700 dark:text-gray-300">
-              Debug Mode
-            </label>
           </div>
         </div>
       </div>

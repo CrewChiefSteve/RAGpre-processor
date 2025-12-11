@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { PreprocessJob, JobStatus } from '@/lib/types/job';
+import { PreprocessJob } from '@/lib/types/job';
 import { getJobs, searchJobs, filterJobs, deleteJob, deleteAllJobs } from '@/lib/client/jobs';
-import StatusBadge from './StatusBadge';
+import DataTable, { Column } from './ui/DataTable';
+import Badge from './ui/Badge';
 
 interface JobsListProps {
   initialJobs?: PreprocessJob[];
@@ -165,21 +166,119 @@ export default function JobsList({ initialJobs = [] }: JobsListProps) {
     return () => clearInterval(interval);
   }, [loadJobs]);
 
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'completed':
+        return 'success';
+      case 'running':
+        return 'processing';
+      case 'failed':
+        return 'error';
+      case 'pending':
+      default:
+        return 'pending';
+    }
+  };
+
+  const columns: Column<PreprocessJob>[] = [
+    {
+      key: 'filename',
+      header: 'Filename',
+      sortable: true,
+      render: (job) => (
+        <div className="font-medium text-gray-900 dark:text-white">
+          {job.filename}
+        </div>
+      ),
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      sortable: true,
+      width: '120px',
+      render: (job) => (
+        <Badge variant={getStatusBadge(job.status)}>
+          {job.status.charAt(0).toUpperCase() + job.status.slice(1)}
+        </Badge>
+      ),
+    },
+    {
+      key: 'createdAt',
+      header: 'Created',
+      sortable: true,
+      width: '150px',
+      render: (job) => (
+        <span className="text-sm text-gray-600 dark:text-gray-400">
+          {formatRelativeTime(job.createdAt)}
+        </span>
+      ),
+    },
+    {
+      key: 'duration',
+      header: 'Duration',
+      width: '100px',
+      render: (job) => (
+        <span className="text-sm text-gray-600 dark:text-gray-400">
+          {formatDuration(job)}
+        </span>
+      ),
+    },
+    {
+      key: 'documentType',
+      header: 'Type',
+      width: '120px',
+      render: (job) => (
+        <span className="text-sm text-gray-600 dark:text-gray-400">
+          {job.documentType || '-'}
+        </span>
+      ),
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      width: '80px',
+      render: (job) => (
+        <button
+          onClick={(e) => handleDeleteJob(job.id, e)}
+          className="text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 transition"
+          title="Delete job"
+        >
+          🗑️
+        </button>
+      ),
+    },
+  ];
+
   return (
-    <div className="p-6">
+    <div className="p-6 space-y-4">
       {/* Search and Filter Controls */}
-      <div className="mb-4 flex gap-4">
-        <input
-          type="text"
-          placeholder="Search jobs..."
-          value={searchQuery}
-          onChange={handleSearchChange}
-          className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
-        />
+      <div className="flex flex-col md:flex-row gap-4">
+        <div className="flex-1 relative">
+          <svg
+            className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+            />
+          </svg>
+          <input
+            type="text"
+            placeholder="Search jobs..."
+            value={searchQuery}
+            onChange={handleSearchChange}
+            className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
         <select
           value={statusFilter}
           onChange={handleStatusFilterChange}
-          className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+          className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           <option value="all">All Status</option>
           <option value="pending">Pending</option>
@@ -188,100 +287,49 @@ export default function JobsList({ initialJobs = [] }: JobsListProps) {
           <option value="failed">Failed</option>
         </select>
         <button
+          onClick={loadJobs}
+          disabled={loading}
+          className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 transition"
+          title="Refresh"
+        >
+          ↻ Refresh
+        </button>
+        <button
           onClick={handleDeleteAllJobs}
           disabled={loading || jobs.length === 0}
           className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
         >
-          Delete All Jobs
+          Delete All
         </button>
+      </div>
+
+      {/* Results count */}
+      <div className="text-sm text-gray-600 dark:text-gray-400">
+        Showing {jobs.length} job{jobs.length !== 1 ? 's' : ''}
+        {loading && ' (refreshing...)'}
       </div>
 
       {/* Error Message */}
       {error && (
-        <div className="mb-4 p-4 bg-red-100 dark:bg-red-900 border border-red-400 dark:border-red-700 text-red-700 dark:text-red-200 rounded-lg">
+        <div className="p-4 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-200 rounded-lg">
           {error}
         </div>
       )}
 
-      {/* Loading State */}
-      {loading && jobs.length === 0 && (
-        <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+      {/* Jobs Table */}
+      {loading && jobs.length === 0 ? (
+        <div className="text-center py-12 text-gray-500 dark:text-gray-400">
           Loading jobs...
         </div>
+      ) : (
+        <DataTable
+          data={jobs}
+          columns={columns}
+          keyExtractor={(job) => job.id}
+          onRowClick={(job) => handleRowClick(job.id)}
+          emptyMessage="No jobs found. Upload a document to get started."
+        />
       )}
-
-      {/* Jobs Table */}
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-gray-200 dark:border-gray-700">
-              <th className="text-left py-3 px-4 text-gray-700 dark:text-gray-300 font-semibold">ID</th>
-              <th className="text-left py-3 px-4 text-gray-700 dark:text-gray-300 font-semibold">Filename</th>
-              <th className="text-left py-3 px-4 text-gray-700 dark:text-gray-300 font-semibold">Status</th>
-              <th className="text-left py-3 px-4 text-gray-700 dark:text-gray-300 font-semibold">Created</th>
-              <th className="text-left py-3 px-4 text-gray-700 dark:text-gray-300 font-semibold">Duration</th>
-              <th className="text-left py-3 px-4 text-gray-700 dark:text-gray-300 font-semibold">Document Type</th>
-              <th className="text-left py-3 px-4 text-gray-700 dark:text-gray-300 font-semibold">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {jobs.length === 0 && !loading ? (
-              <tr>
-                <td colSpan={7} className="text-center py-8 text-gray-500 dark:text-gray-400">
-                  No jobs found. Upload a document to get started.
-                </td>
-              </tr>
-            ) : (
-              jobs.map((job) => (
-                <tr
-                  key={job.id}
-                  onClick={() => handleRowClick(job.id)}
-                  className="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer transition"
-                >
-                  <td className="py-3 px-4 text-gray-900 dark:text-gray-100 font-mono text-sm">
-                    {job.id.substring(0, 6)}
-                  </td>
-                  <td className="py-3 px-4 text-gray-900 dark:text-gray-100">
-                    {job.filename}
-                  </td>
-                  <td className="py-3 px-4">
-                    <StatusBadge status={job.status} />
-                  </td>
-                  <td className="py-3 px-4 text-gray-600 dark:text-gray-400">
-                    {formatRelativeTime(job.createdAt)}
-                  </td>
-                  <td className="py-3 px-4 text-gray-600 dark:text-gray-400">
-                    {formatDuration(job)}
-                  </td>
-                  <td className="py-3 px-4 text-gray-600 dark:text-gray-400">
-                    {job.documentType || '-'}
-                  </td>
-                  <td className="py-3 px-4">
-                    <div className="flex gap-2">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleRowClick(job.id);
-                        }}
-                        className="text-blue-600 dark:text-blue-400 hover:underline"
-                      >
-                        View
-                      </button>
-                      <button
-                        onClick={(e) => handleDeleteJob(job.id, e)}
-                        className="text-red-600 dark:text-red-400 hover:underline"
-                        title="Delete job"
-                      >
-                        🗑️
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
     </div>
   );
 }

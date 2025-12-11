@@ -85,7 +85,7 @@ function normalizeAzureResult(result: AnalyzeResult, expectedPageCount: number):
       let bbox: BBox | undefined;
       const br = para.boundingRegions?.[0];
       if (br?.polygon && result.pages) {
-        const azurePage = result.pages.find((p) => p.pageNumber === pageNum);
+        const azurePage = result.pages.find((p: any) => p.pageNumber === pageNum);
         if (azurePage) {
           bbox = normalizeBoundingBox(br.polygon, azurePage.width, azurePage.height);
         }
@@ -115,7 +115,7 @@ function normalizeAzureResult(result: AnalyzeResult, expectedPageCount: number):
       let bbox: BBox | undefined;
       const br = table.boundingRegions?.[0];
       if (br?.polygon && result.pages) {
-        const azurePage = result.pages.find((p) => p.pageNumber === pageNum);
+        const azurePage = result.pages.find((p: any) => p.pageNumber === pageNum);
         if (azurePage) {
           bbox = normalizeBoundingBox(br.polygon, azurePage.width, azurePage.height);
         }

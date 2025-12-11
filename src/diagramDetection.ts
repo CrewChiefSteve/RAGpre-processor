@@ -32,7 +32,7 @@ function extractCaptionFromParagraphs(
 
   // Find paragraphs on the same page
   const pageParagraphs = result.paragraphs.filter(
-    (p) => p.boundingRegions?.[0]?.pageNumber === pageNumber
+    (p: any) => p.boundingRegions?.[0]?.pageNumber === pageNumber
   );
 
   // Look for caption patterns: "Figure 3.2:", "Fig. 1:", "Diagram A:", etc.

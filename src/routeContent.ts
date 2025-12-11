@@ -27,13 +27,13 @@ export interface RouteContentOptions {
 function buildHandwritingSpanChecker(result: AnalyzeResult) {
   const handwritingSpans =
     result.styles
-      ?.filter((s) => s.isHandwritten)
-      .flatMap((s) => s.spans ?? []) ?? [];
+      ?.filter((s: any) => s.isHandwritten)
+      .flatMap((s: any) => s.spans ?? []) ?? [];
 
   // Returns true if any handwriting span overlaps with [offset, offset+length)
   return (offset: number, length: number): boolean => {
     const end = offset + length;
-    return handwritingSpans.some((span) => {
+    return handwritingSpans.some((span: any) => {
       const spanStart = span.offset ?? 0;
       const spanEnd = spanStart + (span.length ?? 0);
       // simple overlap check
@@ -123,8 +123,8 @@ export async function routeContent(
         // Use the minimum cell confidence as a conservative estimate
         // Note: confidence may not be available in all Azure SDK versions
         const confidences = table.cells
-          .map((cell) => (cell as any).confidence as number | undefined)
-          .filter((c): c is number => c !== undefined);
+          .map((cell: any) => (cell as any).confidence as number | undefined)
+          .filter((c: number | undefined): c is number => c !== undefined);
         if (confidences.length > 0) {
           tableConfidence = Math.min(...confidences);
         }

@@ -150,71 +150,126 @@ export async function extractDiagramImages(
   const ext = path.extname(normalizedPath).toLowerCase();
   const isPdf = ext === ".pdf";
 
-  for (const diagram of diagrams) {
-    try {
-      const imageFilename = `${diagram.id}.png`;
-      const imagePath = path.join(imagesDir, imageFilename);
+  if (isPdf) {
+    // Group diagrams by page number for efficient rendering
+    const diagramsByPage = new Map<number, DiagramAsset[]>();
+    for (const diagram of diagrams) {
+      if (!diagram.page) {
+        console.warn(`[extractDiagramImages] Diagram ${diagram.id} has no page number, skipping`);
+        updated.push(diagram);
+        continue;
+      }
+      if (!diagramsByPage.has(diagram.page)) {
+        diagramsByPage.set(diagram.page, []);
+      }
+      diagramsByPage.get(diagram.page)!.push(diagram);
+    }
 
-      // Step 1: Get full page image
-      let pageImagePath: string;
+    console.log(`[extractDiagramImages] Processing ${diagramsByPage.size} unique page(s) for ${diagrams.length} diagram(s)`);
 
-      if (isPdf) {
-        // Render PDF page using Phase D renderer (temp file)
-        const tempPagePath = path.join(imagesDir, `temp_page_${diagram.page}.png`);
+    // Process each page: render once, crop multiple diagrams
+    for (const [pageNum, pageDiagrams] of diagramsByPage) {
+      const tempPagePath = path.join(imagesDir, `temp_page_${pageNum}.png`);
 
-        console.log(`[extractDiagramImages] Rendering PDF page ${diagram.page} for ${diagram.id}`);
+      try {
+        // Render this page ONCE
+        console.log(`[extractDiagramImages] Rendering PDF page ${pageNum} (${pageDiagrams.length} diagram(s))`);
         await renderSinglePageToPng({
           pdfPath: normalizedPath,
-          pageNumber: diagram.page!,
+          pageNumber: pageNum,
           pngPath: tempPagePath,
           scale: 2.0,
         });
 
-        pageImagePath = tempPagePath;
-      } else {
-        // Use normalized image from Phase A
-        pageImagePath = normalizedPath;
-      }
+        // Crop all diagrams from this rendered page
+        for (const diagram of pageDiagrams) {
+          try {
+            const imageFilename = `${diagram.id}.png`;
+            const imagePath = path.join(imagesDir, imageFilename);
 
-      // Step 2: Crop diagram region using bounding box
-      console.log(`[extractDiagramImages] Extracting ${diagram.id} to ${imagePath}`);
+            console.log(`[extractDiagramImages] Extracting ${diagram.id} to ${imagePath}`);
 
-      if (diagram.boundingBox) {
-        // Get page dimensions for this diagram
-        const pageDims = diagram.page ? pageDimensionsMap.get(diagram.page) : undefined;
+            if (diagram.boundingBox) {
+              // Get page dimensions for this diagram
+              const pageDims = pageDimensionsMap.get(pageNum);
 
-        // Crop using bounding box with appropriate coordinate system
-        await cropDiagramRegion(
-          pageImagePath,
-          diagram.boundingBox,
-          imagePath,
-          pageDims
-        );
-      } else {
-        // No bounding box - copy full page as fallback
-        console.warn(`[extractDiagramImages] No bounding box for ${diagram.id}, using full page`);
-        await sharp(pageImagePath).toFile(imagePath);
-      }
+              // Crop using bounding box with appropriate coordinate system
+              await cropDiagramRegion(
+                tempPagePath,
+                diagram.boundingBox,
+                imagePath,
+                pageDims
+              );
+            } else {
+              // No bounding box - copy full page as fallback
+              console.warn(`[extractDiagramImages] No bounding box for ${diagram.id}, using full page`);
+              await sharp(tempPagePath).toFile(imagePath);
+            }
 
-      // Clean up temp file if PDF
-      if (isPdf) {
+            updated.push({
+              ...diagram,
+              imagePath: path.relative(outDir, imagePath),
+            });
+
+            console.log(`[extractDiagramImages] Successfully extracted ${diagram.id}`);
+          } catch (err) {
+            console.error(`[extractDiagramImages] Failed to extract ${diagram.id}:`, err);
+            // Keep diagram but without image path
+            updated.push(diagram);
+          }
+        }
+      } catch (err) {
+        console.error(`[extractDiagramImages] Failed to render page ${pageNum}:`, err);
+        // Keep diagrams but without image paths
+        for (const diagram of pageDiagrams) {
+          updated.push(diagram);
+        }
+      } finally {
+        // Clean up temp page file
         try {
-          await fs.promises.unlink(pageImagePath);
+          await fs.promises.unlink(tempPagePath);
         } catch (err) {
           // Ignore cleanup errors
         }
       }
+    }
+  } else {
+    // Image-based document: process diagrams directly (no grouping needed)
+    for (const diagram of diagrams) {
+      try {
+        const imageFilename = `${diagram.id}.png`;
+        const imagePath = path.join(imagesDir, imageFilename);
 
-      updated.push({
-        ...diagram,
-        imagePath: path.relative(outDir, imagePath),
-      });
+        console.log(`[extractDiagramImages] Extracting ${diagram.id} from image`);
 
-      console.log(`[extractDiagramImages] Successfully extracted ${diagram.id}`);
-    } catch (err) {
-      console.error(`[extractDiagramImages] Failed to extract ${diagram.id}:`, err);
-      // Keep diagram but without image path
-      updated.push(diagram);
+        if (diagram.boundingBox) {
+          // Get page dimensions for this diagram (if available)
+          const pageDims = diagram.page ? pageDimensionsMap.get(diagram.page) : undefined;
+
+          // Crop using bounding box
+          await cropDiagramRegion(
+            normalizedPath,
+            diagram.boundingBox,
+            imagePath,
+            pageDims
+          );
+        } else {
+          // No bounding box - copy full image as fallback
+          console.warn(`[extractDiagramImages] No bounding box for ${diagram.id}, using full image`);
+          await sharp(normalizedPath).toFile(imagePath);
+        }
+
+        updated.push({
+          ...diagram,
+          imagePath: path.relative(outDir, imagePath),
+        });
+
+        console.log(`[extractDiagramImages] Successfully extracted ${diagram.id}`);
+      } catch (err) {
+        console.error(`[extractDiagramImages] Failed to extract ${diagram.id}:`, err);
+        // Keep diagram but without image path
+        updated.push(diagram);
+      }
     }
   }
 

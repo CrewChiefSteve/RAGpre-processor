@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react';
 import { PreprocessJob, JobOutputs } from '@/lib/types/job';
 import { getJob, getJobOutputs, LogEntry, getJobLogs } from '@/lib/client/jobs';
-import PhaseTimeline from './PhaseTimeline';
-import LogsPanel from './LogsPanel';
+import JobHeader from './jobs/JobHeader';
+import JobStats from './jobs/JobStats';
 import ContentTabs from './ContentTabs';
 import Link from 'next/link';
 import type { RulebookMetrics } from '@/src/lib/metrics/rulebookMetrics';
@@ -174,6 +174,15 @@ export default function JobDetail({ jobId, initialJob, initialOutputs, rulebookM
     }
   };
 
+  // Calculate stats from outputs
+  const stats = outputs?.manifest ? {
+    diagrams: outputs.manifest.diagrams?.length || 0,
+    tables: outputs.manifest.tables?.length || 0,
+    narrativeChunks: outputs.manifest.narrativeChunks?.length || 0,
+    autoOk: outputs.manifest.qualitySummary?.ok || 0,
+    needsReview: (outputs.manifest.qualitySummary?.low_confidence || 0) + (outputs.manifest.qualitySummary?.handwriting || 0),
+  } : undefined;
+
   return (
     <div className="space-y-6">
       {/* Error Banner */}
@@ -183,93 +192,11 @@ export default function JobDetail({ jobId, initialJob, initialOutputs, rulebookM
         </div>
       )}
 
-      {/* Job Metadata Card */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-          <div>
-            <p className="text-sm text-gray-500 dark:text-gray-400">Filename</p>
-            <p className="font-semibold text-gray-900 dark:text-gray-100 truncate" title={job.filename}>
-              {job.filename}
-            </p>
-          </div>
-          <div>
-            <p className="text-sm text-gray-500 dark:text-gray-400">Status</p>
-            <span className={`inline-block px-2 py-1 rounded text-xs font-semibold ${getStatusColor(job.status)}`}>
-              {job.status.toUpperCase()}
-            </span>
-          </div>
-          <div>
-            <p className="text-sm text-gray-500 dark:text-gray-400">Duration</p>
-            <p className="font-semibold text-gray-900 dark:text-gray-100">{getDuration()}</p>
-          </div>
-          <div>
-            <p className="text-sm text-gray-500 dark:text-gray-400">Document Type</p>
-            <p className="font-semibold text-gray-900 dark:text-gray-100">{job.documentType || '-'}</p>
-          </div>
-        </div>
+      {/* Modern Job Header */}
+      <JobHeader job={job} duration={getDuration()} />
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4 text-sm">
-          <div>
-            <p className="text-gray-500 dark:text-gray-400">Created</p>
-            <p className="text-gray-900 dark:text-gray-100">{formatTimestamp(job.createdAt)}</p>
-          </div>
-          <div>
-            <p className="text-gray-500 dark:text-gray-400">Started</p>
-            <p className="text-gray-900 dark:text-gray-100">{formatTimestamp(job.startedAt)}</p>
-          </div>
-          <div>
-            <p className="text-gray-500 dark:text-gray-400">Completed</p>
-            <p className="text-gray-900 dark:text-gray-100">{formatTimestamp(job.completedAt)}</p>
-          </div>
-        </div>
-
-        <div className="mb-4 p-3 bg-gray-50 dark:bg-gray-900 rounded text-sm">
-          <p className="font-semibold text-gray-700 dark:text-gray-300 mb-2">Configuration</p>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-            <div>
-              <span className="text-gray-500 dark:text-gray-400">Chunk Size:</span>{' '}
-              <span className="text-gray-900 dark:text-gray-100">{job.config.chunkSize}</span>
-            </div>
-            <div>
-              <span className="text-gray-500 dark:text-gray-400">Overlap:</span>{' '}
-              <span className="text-gray-900 dark:text-gray-100">{job.config.chunkOverlap}</span>
-            </div>
-            <div>
-              <span className="text-gray-500 dark:text-gray-400">Tables:</span>{' '}
-              <span className="text-gray-900 dark:text-gray-100">{job.config.enableTables ? 'Yes' : 'No'}</span>
-            </div>
-            <div>
-              <span className="text-gray-500 dark:text-gray-400">Handwriting:</span>{' '}
-              <span className="text-gray-900 dark:text-gray-100">{job.config.handwritingVision ? 'Yes' : 'No'}</span>
-            </div>
-            <div>
-              <span className="text-gray-500 dark:text-gray-400">Captions:</span>{' '}
-              <span className="text-gray-900 dark:text-gray-100">{job.config.captionDiagrams ? 'Yes' : 'No'}</span>
-            </div>
-            <div>
-              <span className="text-gray-500 dark:text-gray-400">Max Pages:</span>{' '}
-              <span className="text-gray-900 dark:text-gray-100">{job.config.maxPages || 'Unlimited'}</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex gap-2">
-          <button
-            onClick={handleForceProcess}
-            disabled={job.status === 'running' || isProcessing}
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isProcessing ? 'Processing...' : 'Force Process'}
-          </button>
-          <button
-            onClick={handleRetry}
-            disabled={job.status === 'running' || isRetrying}
-            className="px-4 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-700 transition text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isRetrying ? 'Retrying...' : 'Retry Job'}
-          </button>
-        </div>
-      </div>
+      {/* Stats Bar (only show if outputs available) */}
+      {stats && <JobStats stats={stats} />}
 
       {/* Rulebook Metrics */}
       {rulebookMetrics.length > 0 && (
@@ -348,16 +275,11 @@ export default function JobDetail({ jobId, initialJob, initialOutputs, rulebookM
         </div>
       )}
 
-      {/* Phase Timeline and Logs in Two Columns */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <PhaseTimeline phases={job.phases} />
-        <LogsPanel jobId={jobId} initialLogs={logs} />
-      </div>
-
-      {/* Content Tabs */}
+      {/* Content Tabs with Logs */}
       <ContentTabs
         jobId={jobId}
         outputs={outputs}
+        logs={logs}
         isLoading={isLoadingOutputs}
         onRefreshOutputs={handleRefreshOutputs}
       />
