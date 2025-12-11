@@ -46,10 +46,7 @@ export async function POST(request: NextRequest) {
     const buffer = Buffer.from(bytes);
     await writeFile(uploadPath, buffer);
 
-    // Create output directory for this job
-    const outputDir = join(process.cwd(), 'out', `job-${timestamp}`);
-
-    // Create the job in the database
+    // Create the job in the database first to get the job ID
     const job = await prisma.job.create({
       data: {
         filename,
@@ -62,7 +59,7 @@ export async function POST(request: NextRequest) {
         captionDiagrams,
         debug,
         uploadedFilePath: uploadPath,
-        outputDir,
+        outputDir: null, // Will be set below using job.id
         phasesJson: JSON.stringify({
           A: { status: 'not_started' },
           B: { status: 'not_started' },
@@ -70,6 +67,13 @@ export async function POST(request: NextRequest) {
           D: { status: 'not_started' },
         }),
       },
+    });
+
+    // Update the job with the correct outputDir using job.id
+    const outputDir = join(process.cwd(), 'out', 'jobs', job.id);
+    await prisma.job.update({
+      where: { id: job.id },
+      data: { outputDir },
     });
 
     // Create initial log

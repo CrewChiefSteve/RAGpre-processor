@@ -120,15 +120,15 @@ export async function getJobOutputs(id: string): Promise<JobOutputs> {
 /**
  * Get the public URL for a diagram image
  * @param jobId - Job ID
- * @param imagePath - Relative path from diagram metadata (e.g., "diagrams/images/diagram_1.png")
+ * @param imagePath - Relative path from diagram metadata (e.g., "diagrams/images/diagram_1.png" or "diagrams\\images\\diagram_1.png")
  * @returns Public URL to access the diagram image
  */
 export function getDiagramImageUrl(jobId: string, imagePath: string): string {
-  // imagePath format: "diagrams/images/diagram_1.png"
-  // Remove leading "diagrams/" if present since API route already includes it
-  const cleanPath = imagePath.startsWith('diagrams/')
-    ? imagePath.substring('diagrams/'.length)
-    : imagePath;
+  // Normalize path: convert backslashes to forward slashes (Windows paths)
+  // and remove leading "diagrams/" since API route already includes it
+  const cleanPath = imagePath
+    .replace(/\\/g, '/')  // Normalize backslashes to forward slashes
+    .replace(/^diagrams\//, '');  // Remove leading "diagrams/"
 
   return `/api/jobs/${jobId}/diagrams/${cleanPath}`;
 }
